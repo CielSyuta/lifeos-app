@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #05070b;
-  --foreground: #f8fafc;
+  --background: #f7f7fb;
+  --foreground: #111318;
 }
 
 @theme inline {
@@ -17,8 +17,8 @@
 }
 
 html {
-  background: #05070b;
-  color: #f8fafc;
+  background: #000;
+  color: var(--foreground);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -26,10 +26,11 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
-  background: radial-gradient(circle at top, rgba(93, 211, 198, 0.18), transparent 28%), linear-gradient(180deg, #05070b 0%, #0d1422 100%);
+  background: #000;
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
 }
 
 button,
@@ -37,4 +38,86 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+.ios-list {
+  overflow: hidden;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.ios-row {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(60, 60, 67, 0.16);
+  padding: 10px 14px;
+}
+
+.ios-row:last-child {
+  border-bottom: 0;
+}
+
+.ios-switch {
+  position: relative;
+  height: 31px;
+  width: 51px;
+  flex: none;
+  cursor: pointer;
+  appearance: none;
+  border-radius: 999px;
+  background: #d1d1d6;
+  outline: none;
+  transition: background 160ms ease;
+}
+
+.ios-switch::after {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  height: 27px;
+  width: 27px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
+  content: "";
+  transition: transform 160ms ease;
+}
+
+.ios-switch:checked {
+  background: #34c759;
+}
+
+.ios-switch:checked::after {
+  transform: translateX(20px);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #000;
+    --foreground: #fff;
+  }
+
+  .ios-list {
+    background: #1c1c1e;
+    box-shadow: none;
+  }
+
+  .ios-row {
+    border-bottom-color: rgba(84, 84, 88, 0.56);
+  }
 }
