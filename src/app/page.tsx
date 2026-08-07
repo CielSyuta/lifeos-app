@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildIcsContent } from "@/lib/calendar/ics";
-import { buildShortcutJson, buildShortcutPayload, buildShortcutUrl } from "@/lib/reminders/shortcut";
 import {
   detectDuplicateItems,
   formatDisplayDate,
@@ -53,8 +52,6 @@ type AppTab = "import" | "history" | "settings";
 
 type ExportSummary = {
   eventCount: number;
-  reminderCount: number;
-  payload: string;
   icsContent: string;
 };
 
