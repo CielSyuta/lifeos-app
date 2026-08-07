@@ -49,7 +49,7 @@ const COMMON_COLUMNS = [
   "Someday",
 ];
 
-type AppTab = "today" | "import" | "history" | "settings";
+type AppTab = "import" | "history" | "settings";
 
 type ExportSummary = {
   eventCount: number;
@@ -68,7 +68,6 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>("import");
   const [statusMessage, setStatusMessage] = useState("Ready to parse your next schedule.");
   const [successSummary, setSuccessSummary] = useState<ExportSummary | null>(null);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   useEffect(() => {
     const id = setTimeout(() => setLoading(false), 900);
@@ -270,20 +269,6 @@ export default function Home() {
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col overflow-hidden bg-[#f7f7fb] shadow-2xl shadow-black/20 dark:bg-black">
         <StatusBar timeFormat={settings.timeFormat} />
         <div className="flex-1 overflow-y-auto px-4 pb-28 pt-2">
-          {activeTab === "today" ? (
-            <TodayView
-              eventCount={eventCount}
-              reminderCount={reminderCount}
-              completedCount={completedCount}
-              items={exportableItems}
-              settings={settings}
-              onEdit={(id) => {
-                setEditingItemId(id);
-                setActiveTab("import");
-              }}
-            />
-          ) : null}
-
           {activeTab === "import" ? (
             <ImportView
               scheduleText={scheduleText}
@@ -293,8 +278,6 @@ export default function Home() {
               settings={settings}
               statusMessage={statusMessage}
               successSummary={successSummary}
-              editingItemId={editingItemId}
-              setEditingItemId={setEditingItemId}
               updateItem={updateItem}
               updateMany={updateMany}
               deleteItem={deleteItem}
@@ -302,7 +285,6 @@ export default function Home() {
                 setParsedItems([]);
                 setActiveImport(null);
                 setSuccessSummary(null);
-                setEditingItemId(null);
               }}
               parseCurrentSchedule={parseCurrentSchedule}
               handleExport={handleExport}
@@ -318,7 +300,6 @@ export default function Home() {
                 setParsedItems([]);
                 setActiveImport(null);
                 setSuccessSummary(null);
-                setEditingItemId(null);
               }}
             />
           ) : null}
@@ -431,8 +412,6 @@ function ImportView(props: {
   settings: UserSettings;
   statusMessage: string;
   successSummary: ExportSummary | null;
-  editingItemId: string | null;
-  setEditingItemId: (id: string | null) => void;
   updateItem: (id: string, patch: Partial<ScheduleItem>) => void;
   updateMany: (ids: string[], patch: Partial<ScheduleItem>) => void;
   deleteItem: (id: string) => void;
@@ -445,24 +424,42 @@ function ImportView(props: {
   loadSample: () => void;
   clearInput: () => void;
 }) {
+  const [inputExpanded, setInputExpanded] = useState(false);
   const selectedIds = props.parsedItems.filter((item) => !item.skipped).map((item) => item.id);
-  const editingItem = props.parsedItems.find((item) => item.id === props.editingItemId);
 
   return (
     <section>
       <ScreenTitle eyebrow="Import" title="Paste Your Schedule" subtitle="Review parsed events and reminders before handing them to Apple apps." />
       <div className="rounded-[28px] bg-white p-3 shadow-sm ring-1 ring-black/5 dark:bg-[#1c1c1e] dark:ring-white/10">
-        <textarea
-          value={props.scheduleText}
-          onChange={(event) => props.setScheduleText(event.target.value)}
-          className="min-h-[220px] w-full resize-none rounded-[22px] bg-[#f2f2f7] p-4 text-[16px] leading-6 text-[#111318] outline-none placeholder:text-[#8e8e93] dark:bg-[#2c2c2e] dark:text-white"
-          placeholder="Paste a ChatGPT schedule..."
-        />
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <IosButton tone="secondary" label="Sample" onClick={props.loadSample} />
-          <IosButton tone="secondary" label="Clear" onClick={props.clearInput} />
-          <IosButton tone="primary" label="Parse" onClick={props.parseCurrentSchedule} />
-        </div>
+        <button
+          type="button"
+          onClick={() => setInputExpanded((prev) => !prev)}
+          className="mb-2 flex w-full items-center justify-between px-1 text-[14px] font-semibold text-[#007aff]"
+        >
+          <span>Schedule Input</span>
+          <span>{inputExpanded ? "▲ Hide" : "▼ Show"}</span>
+        </button>
+        {inputExpanded ? (
+          <>
+            <textarea
+              value={props.scheduleText}
+              onChange={(event) => props.setScheduleText(event.target.value)}
+              className="min-h-[140px] w-full resize-none rounded-[22px] bg-[#f2f2f7] p-4 text-[16px] leading-6 text-[#111318] outline-none placeholder:text-[#8e8e93] dark:bg-[#2c2c2e] dark:text-white"
+              placeholder="Paste a ChatGPT schedule..."
+            />
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <IosButton tone="secondary" label="Sample" onClick={props.loadSample} />
+              <IosButton tone="secondary" label="Clear" onClick={props.clearInput} />
+              <IosButton tone="primary" label="Parse" onClick={props.parseCurrentSchedule} />
+            </div>
+          </>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            <IosButton tone="secondary" label="Sample" onClick={props.loadSample} />
+            <IosButton tone="secondary" label="Clear" onClick={props.clearInput} />
+            <IosButton tone="primary" label="Parse" onClick={props.parseCurrentSchedule} />
+          </div>
+        )}
       </div>
 
       <p className="mt-3 rounded-2xl bg-[#e8f2ff] px-4 py-3 text-[14px] text-[#0057b7] dark:bg-[#0b2b45] dark:text-[#8bd4ff]">{props.statusMessage}</p>
@@ -492,8 +489,6 @@ function ImportView(props: {
                       key={item.id}
                       item={item}
                       settings={props.settings}
-                      active={props.editingItemId === item.id}
-                      onEdit={() => props.setEditingItemId(item.id)}
                       onDelete={() => props.deleteItem(item.id)}
                       onUpdate={(patch) => props.updateItem(item.id, patch)}
                     />
@@ -502,15 +497,6 @@ function ImportView(props: {
               </div>
             ))}
           </div>
-
-          {editingItem ? (
-            <EditorPanel
-              item={editingItem}
-              settings={props.settings}
-              updateItem={props.updateItem}
-              onClose={() => props.setEditingItemId(null)}
-            />
-          ) : null}
 
           <div className="mt-6 rounded-[28px] bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#1c1c1e] dark:ring-white/10">
             <div className="flex items-center justify-between">
@@ -622,22 +608,18 @@ function CompactRow({ item, settings, onEdit }: { item: ScheduleItem; settings: 
 function ItemRow({
   item,
   settings,
-  active,
-  onEdit,
   onDelete,
   onUpdate,
 }: {
   item: ScheduleItem;
   settings: UserSettings;
-  active: boolean;
-  onEdit: () => void;
   onDelete: () => void;
   onUpdate: (patch: Partial<ScheduleItem>) => void;
 }) {
   return (
-    <div className={`ios-row ${active ? "bg-[#e8f2ff] dark:bg-[#12314a]" : ""} ${item.skipped ? "opacity-45" : ""}`}>
+    <div className={`ios-row ${item.skipped ? "opacity-45" : ""}`}>
       <button type="button" onClick={() => onUpdate({ skipped: !item.skipped })} className={`h-6 w-6 rounded-full border-2 ${item.skipped ? "border-[#c7c7cc]" : "border-[#007aff] bg-[#007aff]"}`} aria-label="Toggle selected" />
-      <button type="button" onClick={onEdit} className="min-w-0 flex-1 text-left">
+      <div className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           <ItemGlyph type={item.type} />
           <span className="truncate text-[16px] font-semibold">{item.title}</span>
@@ -648,7 +630,7 @@ function ItemRow({
           {item.duplicateAction === "skip" ? <Badge tone="red" label="Duplicate" /> : null}
           {item.edited ? <Badge tone="gray" label="Edited" /> : null}
         </span>
-      </button>
+      </div>
       <div className="flex flex-col gap-2">
         <button type="button" onClick={() => onUpdate({ type: item.type === "calendar" ? "reminder" : "calendar" })} className="text-[13px] font-semibold text-[#007aff]">Switch</button>
         <button type="button" onClick={onDelete} className="text-[13px] font-semibold text-[#ff3b30]">Delete</button>
