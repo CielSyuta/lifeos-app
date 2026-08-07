@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
+/* Class-based dark mode — responds to .dark on a parent AND system preference */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #f7f7fb;
-  --foreground: #111318;
+  --background: #f0f2f7;
+  --foreground: #0a0e1a;
+  --surface: #ffffff;
+  --surface-raised: #f8f9fc;
+  --border: rgba(0, 0, 0, 0.07);
+  --text-secondary: #5c6478;
+  --accent: #007aff;
 }
 
 @theme inline {
@@ -17,12 +25,32 @@
   100% { transform: translateX(350%); }
 }
 
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 1; }
+}
+
 * {
   box-sizing: border-box;
 }
 
 html {
-  background: #000;
+  background: #07080d;
   color: var(--foreground);
   -webkit-tap-highlight-color: transparent;
 }
@@ -31,7 +59,7 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
-  background: #000;
+  background: #07080d;
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -49,26 +77,29 @@ button {
   touch-action: manipulation;
 }
 
-.ios-list {
+/* ── Light card list ── */
+.card-list {
   overflow: hidden;
-  border-radius: 22px;
+  border-radius: 20px;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
 }
 
-.ios-row {
+.card-row {
   display: flex;
-  min-height: 58px;
+  min-height: 60px;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid rgba(60, 60, 67, 0.16);
-  padding: 10px 14px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  padding: 12px 16px;
+  transition: background 150ms ease;
 }
 
-.ios-row:last-child {
+.card-row:last-child {
   border-bottom: 0;
 }
 
+/* ── Toggle switch ── */
 .ios-switch {
   position: relative;
   height: 31px;
@@ -79,7 +110,7 @@ button {
   border-radius: 999px;
   background: #d1d1d6;
   outline: none;
-  transition: background 160ms ease;
+  transition: background 200ms ease;
 }
 
 .ios-switch::after {
@@ -92,7 +123,7 @@ button {
   background: #fff;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
   content: "";
-  transition: transform 160ms ease;
+  transition: transform 200ms ease;
 }
 
 .ios-switch:checked {
@@ -103,6 +134,7 @@ button {
   transform: translateX(20px);
 }
 
+/* ── Scroll hiding ── */
 .no-scrollbar {
   scrollbar-width: none;
 }
@@ -111,18 +143,49 @@ button {
   display: none;
 }
 
+/* ── Animation helpers ── */
+.animate-fade-up   { animation: fadeUp 0.35s cubic-bezier(0.22,1,0.36,1) both; }
+.animate-fade-in   { animation: fadeIn 0.25s ease both; }
+.animate-scale-in  { animation: scaleIn 0.25s cubic-bezier(0.22,1,0.36,1) both; }
+
+/* ── Dark mode overrides ── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #000;
-    --foreground: #fff;
+    --background: #07080d;
+    --foreground: #eef0f8;
+    --surface: #0f1117;
+    --surface-raised: #161820;
+    --border: rgba(255,255,255,0.07);
+    --text-secondary: #8892a4;
+    --accent: #60a5fa;
   }
 
-  .ios-list {
-    background: #1c1c1e;
-    box-shadow: none;
+  .card-list {
+    background: #0f1117;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.04);
   }
 
-  .ios-row {
-    border-bottom-color: rgba(84, 84, 88, 0.56);
+  .card-row {
+    border-bottom-color: rgba(255,255,255,0.06);
   }
+}
+
+/* Also apply when .dark class is present (settings toggle) */
+.dark {
+  --background: #07080d;
+  --foreground: #eef0f8;
+  --surface: #0f1117;
+  --surface-raised: #161820;
+  --border: rgba(255,255,255,0.07);
+  --text-secondary: #8892a4;
+  --accent: #60a5fa;
+}
+
+.dark .card-list {
+  background: #0f1117;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.dark .card-row {
+  border-bottom-color: rgba(255,255,255,0.06);
 }

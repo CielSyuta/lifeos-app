@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildIcsContent } from "@/lib/calendar/ics";
-import { buildShortcutJson, buildShortcutPayload, buildShortcutUrl } from "@/lib/reminders/shortcut";
 import {
   detectDuplicateItems,
   formatDisplayDate,
@@ -12,7 +11,7 @@ import {
   resolveExportItems,
 } from "@/lib/parser";
 import { loadActiveImport, loadHistory, loadSettings, saveActiveImport, saveHistory, saveSettings } from "@/lib/storage";
-import type { ImportSession, ScheduleItem, ScheduleItemType, UserSettings } from "@/lib/types";
+import type { ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
 
 const SAMPLE_SCHEDULE = `Date: Saturday, August 8, 2026
 
@@ -34,27 +33,10 @@ Pack Work Bag
 8/8/26 5:00 PM - 1:45 AM
 McDonald's Enfield`;
 
-const COMMON_COLUMNS = [
-  "Morning Routine",
-  "Fitness",
-  "Home",
-  "Laundry",
-  "Food",
-  "Before Leaving",
-  "Night Routine",
-  "Content",
-  "Finance",
-  "Shopping",
-  "Planning",
-  "Someday",
-];
-
-type AppTab = "today" | "import" | "history" | "settings";
+type AppTab = "import" | "history" | "settings";
 
 type ExportSummary = {
   eventCount: number;
-  reminderCount: number;
-  payload: string;
   icsContent: string;
 };
 
@@ -68,29 +50,28 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>("import");
   const [statusMessage, setStatusMessage] = useState("Ready to parse your next schedule.");
   const [successSummary, setSuccessSummary] = useState<ExportSummary | null>(null);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+
+  /* Resolve dark mode: use system preference as initial value, override with settings */
+  const [systemDark, setSystemDark] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    setSystemDark(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  const isDark = settings.darkMode ?? systemDark;
 
   useEffect(() => {
-    const id = setTimeout(() => setLoading(false), 900);
+    const id = setTimeout(() => setLoading(false), 800);
     return () => clearTimeout(id);
   }, []);
 
-  useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
+  useEffect(() => { saveSettings(settings); }, [settings]);
+  useEffect(() => { saveHistory(history); }, [history]);
+  useEffect(() => { saveActiveImport(activeImport); }, [activeImport]);
 
-  useEffect(() => {
-    saveHistory(history);
-  }, [history]);
-
-  useEffect(() => {
-    saveActiveImport(activeImport);
-  }, [activeImport]);
-
-  const exportableItems = useMemo(() => resolveExportItems(parsedItems), [parsedItems]);
   const eventCount = parsedItems.filter((item) => item.type === "calendar" && !item.skipped).length;
-  const reminderCount = parsedItems.filter((item) => item.type === "reminder" && !item.skipped).length;
-  const completedCount = parsedItems.filter((item) => item.completed).length;
 
   const groupedItems = useMemo(() => {
     const groups = new Map<string, ScheduleItem[]>();
@@ -99,97 +80,63 @@ export default function Home() {
       list.push(item);
       groups.set(item.date, list);
     }
-
-    return Array.from(groups.entries()).sort(([left], [right]) => left.localeCompare(right));
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [parsedItems]);
 
   function updateItem(id: string, patch: Partial<ScheduleItem>) {
     const nextItems = parsedItems.map((item) => {
-      if (item.id !== id) {
-        return item;
-      }
-
+      if (item.id !== id) return item;
       const nextItem: ScheduleItem = { ...item, ...patch, edited: true };
-      if (patch.title !== undefined) {
-        nextItem.emoji = extractEmoji(nextItem.title);
-      }
-      if (patch.type !== undefined) {
-        nextItem.inferredType = patch.type;
-        if (patch.type === "reminder" && !nextItem.dueTime) {
-          nextItem.dueTime = nextItem.startTime;
-        }
-      }
+      if (patch.title !== undefined) nextItem.emoji = extractEmoji(nextItem.title);
+      if (patch.type !== undefined) nextItem.inferredType = patch.type;
       return nextItem;
     });
-
     setParsedItems(nextItems);
-    setActiveImport((current) => (current ? { ...current, items: nextItems } : current));
-
+    setActiveImport((cur) => (cur ? { ...cur, items: nextItems } : cur));
     const edited = nextItems.find((item) => item.id === id);
-    if (edited) {
-      setSettings((current) => learnItemRule(edited, current));
-    }
+    if (edited) setSettings((cur) => learnItemRule(edited, cur));
   }
 
   function updateMany(ids: string[], patch: Partial<ScheduleItem>) {
-    let nextItems = parsedItems.map((item) => {
-      if (!ids.includes(item.id)) {
-        return item;
-      }
-      const nextItem = { ...item, ...patch, edited: true };
-      if (patch.type !== undefined) {
-        nextItem.inferredType = patch.type;
-        if (patch.type === "reminder" && !nextItem.dueTime) {
-          nextItem.dueTime = nextItem.startTime;
-        }
-      }
-      return nextItem;
-    });
-    nextItems = detectDuplicateItems(nextItems);
+    const nextItems = detectDuplicateItems(
+      parsedItems.map((item) => {
+        if (!ids.includes(item.id)) return item;
+        const nextItem = { ...item, ...patch, edited: true };
+        if (patch.type !== undefined) nextItem.inferredType = patch.type;
+        return nextItem;
+      })
+    );
     setParsedItems(nextItems);
-    setActiveImport((current) => (current ? { ...current, items: nextItems } : current));
+    setActiveImport((cur) => (cur ? { ...cur, items: nextItems } : cur));
   }
 
   function deleteItem(id: string) {
     const nextItems = parsedItems.filter((item) => item.id !== id);
     setParsedItems(nextItems);
-    setEditingItemId((current) => (current === id ? null : current));
-    setActiveImport((current) => (current ? { ...current, items: nextItems } : current));
+    setActiveImport((cur) => (cur ? { ...cur, items: nextItems } : cur));
   }
 
   function parseCurrentSchedule() {
-    if (!scheduleText.trim()) {
-      setStatusMessage("Paste a schedule first.");
-      return;
-    }
-
+    if (!scheduleText.trim()) { setStatusMessage("Paste a schedule first."); return; }
     const nextItems = detectDuplicateItems(parseSchedule(scheduleText, settings));
     setParsedItems(nextItems);
-
     const session: ImportSession = {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       sourceText: scheduleText,
       items: nextItems,
-      eventCount: nextItems.filter((item) => item.type === "calendar").length,
-      reminderCount: nextItems.filter((item) => item.type === "reminder").length,
+      eventCount: nextItems.filter((i) => i.type === "calendar").length,
+      reminderCount: 0,
     };
-
     setActiveImport(session);
     setSuccessSummary(null);
-    setEditingItemId(nextItems[0]?.id ?? null);
-    setStatusMessage(`Parsed ${nextItems.length} items. Review, edit, then export.`);
+    setStatusMessage(`Parsed ${nextItems.length} items. Review, then export.`);
   }
 
   function handleExport() {
-    if (!parsedItems.length) {
-      setStatusMessage("Parse something first.");
-      return;
-    }
-
+    if (!parsedItems.length) { setStatusMessage("Parse something first."); return; }
     const items = resolveExportItems(parsedItems);
     const icsContent = buildIcsContent(items);
-    const payload = buildShortcutJson(items);
     const now = new Date().toISOString();
     const session: ImportSession = {
       id: crypto.randomUUID(),
@@ -197,68 +144,50 @@ export default function Home() {
       sourceText: scheduleText,
       items: parsedItems,
       exportDate: now,
-      eventCount: items.filter((item) => item.type === "calendar").length,
-      reminderCount: items.filter((item) => item.type === "reminder").length,
+      eventCount: items.filter((i) => i.type === "calendar").length,
+      reminderCount: 0,
       notes: `Exported ${items.length} items`,
     };
-
-    if (settings.saveImportHistory) {
-      setHistory((current) => [session, ...current].slice(0, 20));
-    }
-
+    if (settings.saveImportHistory) setHistory((cur) => [session, ...cur].slice(0, 20));
     setActiveImport(session);
-    setSuccessSummary({ eventCount: session.eventCount, reminderCount: session.reminderCount, payload, icsContent });
-    setStatusMessage("Export ready. Download Calendar events or copy the Shortcut payload.");
+    setSuccessSummary({ eventCount: session.eventCount, icsContent });
+    setStatusMessage("Export ready — download your .ics file.");
   }
 
   function downloadIcs() {
-    if (!successSummary) {
-      return;
-    }
-
+    if (!successSummary) return;
     const blob = new Blob([successSummary.icsContent], { type: "text/calendar;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "lifeos-import.ics";
-    anchor.click();
+    const a = document.createElement("a");
+    a.href = url; a.download = "lifeos-import.ics"; a.click();
     URL.revokeObjectURL(url);
-    setStatusMessage("Downloaded .ics. Open it on iPhone to add events to Apple Calendar.");
-  }
-
-  function copyPayload() {
-    if (!successSummary) {
-      return;
-    }
-    void navigator.clipboard.writeText(successSummary.payload);
-    setStatusMessage("Reminder JSON copied for Apple Shortcuts.");
-  }
-
-  function openShortcut() {
-    const payload = buildShortcutPayload(resolveExportItems(parsedItems));
-    window.location.href = buildShortcutUrl(payload);
+    setStatusMessage("Downloaded .ics — open it on iPhone to add to Apple Calendar.");
   }
 
   function reopenSession(session: ImportSession) {
     setScheduleText(session.sourceText);
     setParsedItems(session.items);
     setActiveImport(session);
-    setEditingItemId(session.items[0]?.id ?? null);
     setActiveTab("import");
     setStatusMessage("History import reopened.");
   }
 
-  function deleteHistory(id: string) {
-    setHistory((current) => current.filter((session) => session.id !== id));
-  }
-
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#05070b]">
-        <div className="flex flex-col items-center gap-6">
-          <div className="text-[52px] font-bold tracking-tight text-white">LifeOS</div>
-          <div className="h-1 w-36 overflow-hidden rounded-full bg-white/20">
-            <div className="h-full w-2/5 animate-[shimmer_1.2s_ease-in-out_infinite] rounded-full bg-[#007aff]" />
+      <main className="flex min-h-screen items-center justify-center bg-[#07080d]">
+        <div className="animate-fade-in flex flex-col items-center gap-8">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-3xl bg-blue-500/20 blur-2xl" />
+            <div className="relative flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-[#3b82f6] to-[#6366f1] shadow-2xl shadow-blue-500/30">
+              <span className="text-3xl font-black text-white tracking-tight">L</span>
+            </div>
+          </div>
+          <div className="text-center">
+            <p className="text-2xl font-bold tracking-tight text-white">LifeOS</p>
+            <p className="mt-1 text-sm text-white/40">Loading your schedule…</p>
+          </div>
+          <div className="h-0.5 w-32 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full w-1/3 animate-[shimmer_1.4s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-transparent via-blue-400 to-transparent" />
           </div>
         </div>
       </main>
@@ -266,166 +195,98 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f4f8] text-[#111318] dark:bg-black dark:text-white">
-      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col overflow-hidden bg-[#f7f7fb] shadow-2xl shadow-black/20 dark:bg-black">
-        <StatusBar timeFormat={settings.timeFormat} />
-        <div className="flex-1 overflow-y-auto px-4 pb-28 pt-2">
-          {activeTab === "today" ? (
-            <TodayView
-              eventCount={eventCount}
-              reminderCount={reminderCount}
-              completedCount={completedCount}
-              items={exportableItems}
-              settings={settings}
-              onEdit={(id) => {
-                setEditingItemId(id);
-                setActiveTab("import");
-              }}
-            />
-          ) : null}
-
-          {activeTab === "import" ? (
-            <ImportView
-              scheduleText={scheduleText}
-              setScheduleText={setScheduleText}
-              parsedItems={parsedItems}
-              groupedItems={groupedItems}
-              settings={settings}
-              statusMessage={statusMessage}
-              successSummary={successSummary}
-              editingItemId={editingItemId}
-              setEditingItemId={setEditingItemId}
-              updateItem={updateItem}
-              updateMany={updateMany}
-              deleteItem={deleteItem}
-              deleteAll={() => {
-                setParsedItems([]);
-                setActiveImport(null);
-                setSuccessSummary(null);
-                setEditingItemId(null);
-              }}
-              parseCurrentSchedule={parseCurrentSchedule}
-              handleExport={handleExport}
-              downloadIcs={downloadIcs}
-              copyPayload={copyPayload}
-              openShortcut={openShortcut}
-              loadSample={() => {
-                setScheduleText(SAMPLE_SCHEDULE);
-                setStatusMessage("Sample schedule loaded.");
-              }}
-              clearInput={() => {
-                setScheduleText("");
-                setParsedItems([]);
-                setActiveImport(null);
-                setSuccessSummary(null);
-                setEditingItemId(null);
-              }}
-            />
-          ) : null}
-
-          {activeTab === "history" ? (
-            <HistoryView history={history} onReopen={reopenSession} onDelete={deleteHistory} />
-          ) : null}
-
-          {activeTab === "settings" ? (
-            <SettingsView settings={settings} setSettings={setSettings} />
-          ) : null}
+    <div className={isDark ? "dark" : ""}>
+      <main className="min-h-screen bg-[#f0f2f7] text-[#0a0e1a] transition-colors duration-300 dark:bg-[#07080d] dark:text-[#eef0f8]">
+        <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col bg-[#f0f2f7] shadow-2xl shadow-black/30 transition-colors duration-300 dark:bg-[#07080d]">
+          <StatusBar timeFormat={settings.timeFormat} />
+          <div className="flex-1 overflow-y-auto px-4 pb-32 pt-3">
+            {activeTab === "import" && (
+              <div className="animate-fade-up">
+                <ImportView
+                  scheduleText={scheduleText}
+                  setScheduleText={setScheduleText}
+                  parsedItems={parsedItems}
+                  groupedItems={groupedItems}
+                  settings={settings}
+                  statusMessage={statusMessage}
+                  successSummary={successSummary}
+                  eventCount={eventCount}
+                  updateItem={updateItem}
+                  updateMany={updateMany}
+                  deleteItem={deleteItem}
+                  deleteAll={() => { setParsedItems([]); setActiveImport(null); setSuccessSummary(null); }}
+                  parseCurrentSchedule={parseCurrentSchedule}
+                  handleExport={handleExport}
+                  downloadIcs={downloadIcs}
+                  loadSample={() => { setScheduleText(SAMPLE_SCHEDULE); setStatusMessage("Sample schedule loaded."); }}
+                  clearInput={() => { setScheduleText(""); setParsedItems([]); setActiveImport(null); setSuccessSummary(null); }}
+                />
+              </div>
+            )}
+            {activeTab === "history" && (
+              <div className="animate-fade-up">
+                <HistoryView history={history} onReopen={reopenSession} onDelete={(id) => setHistory((cur) => cur.filter((s) => s.id !== id))} />
+              </div>
+            )}
+            {activeTab === "settings" && (
+              <div className="animate-fade-up">
+                <SettingsView settings={settings} setSettings={setSettings} />
+              </div>
+            )}
+          </div>
+          <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
         </div>
-        <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
 
+/* ── StatusBar ── */
 function StatusBar({ timeFormat }: { timeFormat: "12h" | "24h" }) {
   const [now, setNow] = useState(() => new Date());
-
   useEffect(() => {
-    const tick = () => setNow(new Date());
-    const id = setInterval(tick, 30_000);
+    const id = setInterval(() => setNow(new Date()), 1_000);
     return () => clearInterval(id);
   }, []);
 
-  const timeStr = now.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: timeFormat === "12h",
-  });
+  const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: timeFormat === "12h" });
+  const dateStr = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
   return (
-    <div className="sticky top-0 z-20 bg-[#f7f7fb]/85 px-5 pb-2 pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-xl dark:bg-black/80">
-      <div className="flex items-center justify-between text-[13px] font-semibold">
-        <span>{timeStr}</span>
-        <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-4 rounded-sm border border-current" />
-          <span className="h-2.5 w-2 rounded-sm bg-current" />
+    <div className="sticky top-0 z-20 border-b border-black/5 bg-[#f0f2f7]/80 px-5 pb-2.5 pt-[max(14px,env(safe-area-inset-top))] backdrop-blur-xl transition-colors dark:border-white/5 dark:bg-[#07080d]/80">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[13px] font-semibold tabular-nums text-[#0a0e1a] dark:text-[#eef0f8]">{timeStr}</span>
+        <span className="text-[12px] font-medium text-[#5c6478] dark:text-[#8892a4]">{dateStr}</span>
+        <div className="flex items-center gap-1">
+          <div className="h-2.5 w-[18px] rounded-sm border-[1.5px] border-current opacity-50" />
+          <div className="h-2 w-1 rounded-[1px] bg-current opacity-50" />
         </div>
       </div>
     </div>
   );
 }
 
-function ScreenTitle({ eyebrow, title, subtitle }: { eyebrow?: string; title: string; subtitle?: string }) {
+/* ── Page header ── */
+function PageHeader({ eyebrow, title, subtitle }: { eyebrow?: string; title: string; subtitle?: string }) {
   return (
-    <header className="mb-5">
-      {eyebrow ? <p className="text-[13px] font-semibold text-[#007aff] dark:text-[#64d2ff]">{eyebrow}</p> : null}
-      <h1 className="mt-1 text-[34px] font-bold leading-tight tracking-[-0.02em] text-[#111318] dark:text-white">{title}</h1>
-      {subtitle ? <p className="mt-2 text-[15px] leading-6 text-[#6d6d72] dark:text-[#9b9ba1]">{subtitle}</p> : null}
+    <header className="mb-6 pt-1">
+      {eyebrow && <p className="mb-1 text-[12px] font-semibold uppercase tracking-widest text-[#007aff] dark:text-[#60a5fa]">{eyebrow}</p>}
+      <h1 className="text-[32px] font-bold leading-tight tracking-[-0.025em] text-[#0a0e1a] dark:text-[#eef0f8]">{title}</h1>
+      {subtitle && <p className="mt-2 text-[14px] leading-5 text-[#5c6478] dark:text-[#8892a4]">{subtitle}</p>}
     </header>
   );
 }
 
-function TodayView({
-  eventCount,
-  reminderCount,
-  completedCount,
-  items,
-  settings,
-  onEdit,
-}: {
-  eventCount: number;
-  reminderCount: number;
-  completedCount: number;
-  items: ScheduleItem[];
-  settings: UserSettings;
-  onEdit: (id: string) => void;
-}) {
-  const upcoming = items.slice(0, 4);
-
-  return (
-    <section>
-      <ScreenTitle eyebrow="LifeOS" title="Today" subtitle="A local dashboard from your latest imports and exports." />
-      <div className="grid grid-cols-2 gap-3">
-        <MetricCard color="blue" label="Events" value={eventCount} />
-        <MetricCard color="orange" label="Tasks" value={reminderCount} />
-        <MetricCard color="green" label="Completed" value={completedCount} />
-        <MetricCard color="purple" label="Upcoming" value={Math.max(items.length - completedCount, 0)} />
-      </div>
-
-      <div className="mt-6">
-        <IosGroupTitle title="Up Next" />
-        <div className="ios-list">
-          {upcoming.length ? (
-            upcoming.map((item) => <CompactRow key={item.id} item={item} settings={settings} onEdit={() => onEdit(item.id)} />)
-          ) : (
-            <EmptyState title="No imported items yet" text="Paste a schedule on the Import tab to build your day." />
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
+/* ── ImportView ── */
 function ImportView(props: {
   scheduleText: string;
-  setScheduleText: (value: string) => void;
+  setScheduleText: (v: string) => void;
   parsedItems: ScheduleItem[];
   groupedItems: [string, ScheduleItem[]][];
   settings: UserSettings;
   statusMessage: string;
   successSummary: ExportSummary | null;
-  editingItemId: string | null;
-  setEditingItemId: (id: string | null) => void;
+  eventCount: number;
   updateItem: (id: string, patch: Partial<ScheduleItem>) => void;
   updateMany: (ids: string[], patch: Partial<ScheduleItem>) => void;
   deleteItem: (id: string) => void;
@@ -433,60 +294,79 @@ function ImportView(props: {
   parseCurrentSchedule: () => void;
   handleExport: () => void;
   downloadIcs: () => void;
-  copyPayload: () => void;
-  openShortcut: () => void;
   loadSample: () => void;
   clearInput: () => void;
 }) {
-  const selectedIds = props.parsedItems.filter((item) => !item.skipped).map((item) => item.id);
-  const editingItem = props.parsedItems.find((item) => item.id === props.editingItemId);
+  const [inputOpen, setInputOpen] = useState(false);
+  const selectedIds = props.parsedItems.filter((i) => !i.skipped).map((i) => i.id);
 
   return (
     <section>
-      <ScreenTitle eyebrow="Import" title="Paste Your Schedule" subtitle="Review parsed events and reminders before handing them to Apple apps." />
-      <div className="rounded-[28px] bg-white p-3 shadow-sm ring-1 ring-black/5 dark:bg-[#1c1c1e] dark:ring-white/10">
-        <textarea
-          value={props.scheduleText}
-          onChange={(event) => props.setScheduleText(event.target.value)}
-          className="min-h-[220px] w-full resize-none rounded-[22px] bg-[#f2f2f7] p-4 text-[16px] leading-6 text-[#111318] outline-none placeholder:text-[#8e8e93] dark:bg-[#2c2c2e] dark:text-white"
-          placeholder="Paste a ChatGPT schedule..."
-        />
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <IosButton tone="secondary" label="Sample" onClick={props.loadSample} />
-          <IosButton tone="secondary" label="Clear" onClick={props.clearInput} />
-          <IosButton tone="primary" label="Parse" onClick={props.parseCurrentSchedule} />
+      <PageHeader eyebrow="Import" title="Your Schedule" subtitle="Paste, parse, and export events to Apple Calendar." />
+
+      {/* Input card */}
+      <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/5 transition-all dark:bg-[#0f1117] dark:ring-white/6">
+        <button
+          type="button"
+          onClick={() => setInputOpen((p) => !p)}
+          className="flex w-full items-center justify-between px-4 py-3.5 text-left transition-colors active:bg-black/5 dark:active:bg-white/5"
+        >
+          <span className="text-[14px] font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">Schedule Input</span>
+          <span className="flex items-center gap-1.5 text-[13px] font-medium text-[#007aff] dark:text-[#60a5fa]">
+            {inputOpen ? "Hide" : "Show"}
+            <svg className={`h-3.5 w-3.5 transition-transform duration-200 ${inputOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="m19 9-7 7-7-7" /></svg>
+          </span>
+        </button>
+        <div className={`transition-all duration-300 ease-out ${inputOpen ? "max-h-[400px] opacity-100" : "max-h-0 overflow-hidden opacity-0"}`}>
+          <div className="px-4 pb-2">
+            <textarea
+              value={props.scheduleText}
+              onChange={(e) => props.setScheduleText(e.target.value)}
+              className="min-h-[130px] w-full resize-none rounded-xl bg-[#f0f2f7] p-3 text-[15px] leading-6 text-[#0a0e1a] outline-none placeholder:text-[#9ca3af] dark:bg-[#161820] dark:text-[#eef0f8] dark:placeholder:text-[#5c6478]"
+              placeholder="Paste a ChatGPT schedule here…"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 border-t border-black/5 p-3 dark:border-white/5">
+          <ActionButton tone="ghost" label="Sample" onClick={props.loadSample} />
+          <ActionButton tone="ghost" label="Clear" onClick={props.clearInput} />
+          <ActionButton tone="primary" label="Parse" onClick={props.parseCurrentSchedule} />
         </div>
       </div>
 
-      <p className="mt-3 rounded-2xl bg-[#e8f2ff] px-4 py-3 text-[14px] text-[#0057b7] dark:bg-[#0b2b45] dark:text-[#8bd4ff]">{props.statusMessage}</p>
+      {/* Status pill */}
+      <p className="mt-3 rounded-xl bg-[#e8f2ff] px-4 py-2.5 text-[13px] font-medium text-[#0057b7] dark:bg-[#0c1e38] dark:text-[#93c5fd]">
+        {props.statusMessage}
+      </p>
 
-      {props.parsedItems.length ? (
+      {props.parsedItems.length > 0 && (
         <>
+          {/* Preview header */}
           <div className="mt-6 flex items-center justify-between">
-            <IosGroupTitle title="Preview" />
-            <span className="text-[13px] font-semibold text-[#8e8e93]">{props.parsedItems.length} items</span>
+            <SectionLabel label="Preview" />
+            <span className="rounded-full bg-[#007aff]/10 px-2.5 py-1 text-[12px] font-semibold text-[#007aff] dark:bg-[#60a5fa]/10 dark:text-[#60a5fa]">
+              {props.parsedItems.length} items
+            </span>
           </div>
 
-          <BulkBar
-            onSelectAll={() => props.updateMany(props.parsedItems.map((item) => item.id), { skipped: false })}
-            onDeselectAll={() => props.updateMany(props.parsedItems.map((item) => item.id), { skipped: true })}
-            onCalendar={() => props.updateMany(selectedIds, { type: "calendar" })}
-            onReminder={() => props.updateMany(selectedIds, { type: "reminder" })}
-            onDeleteAll={props.deleteAll}
-          />
+          {/* Bulk actions */}
+          <div className="no-scrollbar -mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-1">
+            <PillButton label="Select All" onClick={() => props.updateMany(props.parsedItems.map((i) => i.id), { skipped: false })} />
+            <PillButton label="Deselect" onClick={() => props.updateMany(props.parsedItems.map((i) => i.id), { skipped: true })} />
+            <PillButton label="Delete All" danger onClick={props.deleteAll} />
+          </div>
 
+          {/* Item groups */}
           <div className="mt-3 space-y-5">
-            {props.groupedItems.map(([date, items]) => (
-              <div key={date}>
-                <IosGroupTitle title={formatDisplayDate(date)} />
-                <div className="ios-list">
+            {props.groupedItems.map(([date, items], gi) => (
+              <div key={date} style={{ animationDelay: `${gi * 60}ms` }} className="animate-fade-up">
+                <SectionLabel label={formatDisplayDate(date)} />
+                <div className="card-list mt-2">
                   {items.map((item) => (
                     <ItemRow
                       key={item.id}
                       item={item}
                       settings={props.settings}
-                      active={props.editingItemId === item.id}
-                      onEdit={() => props.setEditingItemId(item.id)}
                       onDelete={() => props.deleteItem(item.id)}
                       onUpdate={(patch) => props.updateItem(item.id, patch)}
                     />
@@ -496,224 +376,177 @@ function ImportView(props: {
             ))}
           </div>
 
-          {editingItem ? (
-            <EditorPanel
-              item={editingItem}
-              settings={props.settings}
-              updateItem={props.updateItem}
-              onClose={() => props.setEditingItemId(null)}
-            />
-          ) : null}
-
-          <div className="mt-6 rounded-[28px] bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#1c1c1e] dark:ring-white/10">
+          {/* Export card */}
+          <div className="mt-6 animate-scale-in overflow-hidden rounded-2xl bg-gradient-to-br from-[#007aff] to-[#5b5ef4] p-4 shadow-lg shadow-blue-500/20">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[17px] font-semibold">Add to Apple</p>
-                <p className="mt-1 text-[13px] text-[#6d6d72] dark:text-[#a1a1a6]">Calendar uses .ics. Reminders use Shortcut JSON.</p>
+                <p className="text-[16px] font-bold text-white">Export to Calendar</p>
+                <p className="mt-0.5 text-[13px] text-white/70">
+                  {props.eventCount} event{props.eventCount !== 1 ? "s" : ""} selected
+                </p>
               </div>
-              <IosButton tone="primary" label="Add All" onClick={props.handleExport} />
+              <button
+                type="button"
+                onClick={props.handleExport}
+                className="rounded-xl bg-white/20 px-4 py-2 text-[14px] font-semibold text-white backdrop-blur-sm transition active:scale-95 active:bg-white/30"
+              >
+                Export
+              </button>
             </div>
-            {props.successSummary ? (
-              <div className="mt-4 grid gap-2">
-                <IosButton tone="primary" label={`Download ${props.successSummary.eventCount} Events`} onClick={props.downloadIcs} />
-                <IosButton tone="secondary" label={`Copy ${props.successSummary.reminderCount} Tasks`} onClick={props.copyPayload} />
-                <IosButton tone="secondary" label="Open Shortcut" onClick={props.openShortcut} />
-              </div>
-            ) : null}
+            {props.successSummary && (
+              <button
+                type="button"
+                onClick={props.downloadIcs}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-[14px] font-semibold text-[#007aff] transition active:scale-[0.98] active:opacity-90"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4-4 4m0 0-4-4m4 4V4" /></svg>
+                Download {props.successSummary.eventCount} Events (.ics)
+              </button>
+            )}
           </div>
         </>
-      ) : null}
+      )}
     </section>
   );
 }
 
-function HistoryView({ history, onReopen, onDelete }: { history: ImportSession[]; onReopen: (session: ImportSession) => void; onDelete: (id: string) => void }) {
+/* ── HistoryView ── */
+function HistoryView({ history, onReopen, onDelete }: { history: ImportSession[]; onReopen: (s: ImportSession) => void; onDelete: (id: string) => void }) {
   return (
     <section>
-      <ScreenTitle eyebrow="Archive" title="History" subtitle="Reopen previous imports, make edits, and export them again." />
-      <div className="ios-list">
-        {history.length ? (
-          history.map((session) => (
-            <div key={session.id} className="ios-row">
-              <button type="button" onClick={() => onReopen(session)} className="flex flex-1 items-center gap-3 text-left">
-                <span className="grid h-10 w-10 place-items-center rounded-full bg-[#34c759]/15 text-[#34c759]">H</span>
-                <span>
-                  <span className="block text-[16px] font-semibold">{new Date(session.createdAt).toLocaleDateString()}</span>
-                  <span className="text-[13px] text-[#6d6d72] dark:text-[#a1a1a6]">{session.eventCount} events, {session.reminderCount} reminders</span>
+      <PageHeader eyebrow="Archive" title="History" subtitle="Reopen previous imports and export again." />
+      {history.length ? (
+        <div className="card-list">
+          {history.map((session, i) => (
+            <div key={session.id} style={{ animationDelay: `${i * 40}ms` }} className="animate-fade-up card-row gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#34c759] to-[#2ecc71] text-white shadow-sm">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <button type="button" onClick={() => onReopen(session)} className="min-w-0 flex-1 text-left">
+                <span className="block text-[15px] font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">
+                  {new Date(session.createdAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                </span>
+                <span className="text-[13px] text-[#5c6478] dark:text-[#8892a4]">
+                  {session.eventCount} event{session.eventCount !== 1 ? "s" : ""}
+                  {session.exportDate ? " · Exported" : ""}
                 </span>
               </button>
-              <button type="button" onClick={() => onDelete(session.id)} className="text-[14px] font-semibold text-[#ff3b30]">Delete</button>
+              <button type="button" onClick={() => onDelete(session.id)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold text-[#ef4444] transition active:opacity-70 dark:text-[#f87171]">
+                Delete
+              </button>
             </div>
-          ))
-        ) : (
-          <EmptyState title="No history yet" text="Exports will appear here when import history is enabled." />
-        )}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState icon="🗂️" title="No history yet" text="Exports will appear here when history is enabled." />
+      )}
     </section>
   );
 }
 
-function SettingsView({ settings, setSettings }: { settings: UserSettings; setSettings: (updater: (settings: UserSettings) => UserSettings) => void }) {
+/* ── SettingsView ── */
+function SettingsView({ settings, setSettings }: { settings: UserSettings; setSettings: (fn: (s: UserSettings) => UserSettings) => void }) {
   return (
     <section>
-      <ScreenTitle eyebrow="Preferences" title="Settings" subtitle="Defaults are saved locally on this device." />
-      <div className="space-y-6">
-        <SettingsGroup title="Defaults">
-          <TextSetting label="Calendar" value={settings.defaultCalendar} onChange={(value) => setSettings((current) => ({ ...current, defaultCalendar: value }))} />
-          <TextSetting label="Reminder List" value={settings.defaultReminderList} onChange={(value) => setSettings((current) => ({ ...current, defaultReminderList: value }))} />
-          <SelectSetting label="Column" value={settings.defaultReminderColumn} options={COMMON_COLUMNS} onChange={(value) => setSettings((current) => ({ ...current, defaultReminderColumn: value }))} />
-          <TextSetting label="Calendar Alert" value={settings.defaultCalendarAlert} onChange={(value) => setSettings((current) => ({ ...current, defaultCalendarAlert: value }))} />
-          <SelectSetting label="Travel Time" value={String(settings.defaultTravelTime)} options={["none", "manual", "automatic"]} onChange={(value) => setSettings((current) => ({ ...current, defaultTravelTime: value }))} />
+      <PageHeader eyebrow="Preferences" title="Settings" subtitle="Defaults saved locally on this device." />
+      <div className="space-y-5">
+        <SettingsGroup title="Calendar Defaults">
+          <TextSetting label="Default Calendar" value={settings.defaultCalendar} onChange={(v) => setSettings((s) => ({ ...s, defaultCalendar: v }))} />
+          <TextSetting label="Default Alert" value={settings.defaultCalendarAlert} onChange={(v) => setSettings((s) => ({ ...s, defaultCalendarAlert: v }))} />
+          <SelectSetting label="Travel Time" value={String(settings.defaultTravelTime)} options={["none", "manual", "automatic"]} onChange={(v) => setSettings((s) => ({ ...s, defaultTravelTime: v }))} />
         </SettingsGroup>
-
         <SettingsGroup title="Display">
-          <SelectSetting label="Time Format" value={settings.timeFormat} options={["12h", "24h"]} onChange={(value) => setSettings((current) => ({ ...current, timeFormat: value as UserSettings["timeFormat"] }))} />
-          <SwitchSetting label="Dark Mode" checked={settings.darkMode} onChange={(value) => setSettings((current) => ({ ...current, darkMode: value }))} />
-          <SwitchSetting label="Compact Mode" checked={settings.compactMode} onChange={(value) => setSettings((current) => ({ ...current, compactMode: value }))} />
+          <SelectSetting label="Time Format" value={settings.timeFormat} options={["12h", "24h"]} onChange={(v) => setSettings((s) => ({ ...s, timeFormat: v as UserSettings["timeFormat"] }))} />
+          <SwitchSetting label="Dark Mode" checked={settings.darkMode} onChange={(v) => setSettings((s) => ({ ...s, darkMode: v }))} />
         </SettingsGroup>
-
         <SettingsGroup title="Automation">
-          <SwitchSetting label="Auto-detect Type" checked={settings.autoDetectType} onChange={(value) => setSettings((current) => ({ ...current, autoDetectType: value }))} />
-          <SwitchSetting label="Auto-select Parsed Items" checked={settings.autoSelectAll} onChange={(value) => setSettings((current) => ({ ...current, autoSelectAll: value }))} />
-          <SwitchSetting label="Save Import History" checked={settings.saveImportHistory} onChange={(value) => setSettings((current) => ({ ...current, saveImportHistory: value }))} />
+          <SwitchSetting label="Auto-detect Type" checked={settings.autoDetectType} onChange={(v) => setSettings((s) => ({ ...s, autoDetectType: v }))} />
+          <SwitchSetting label="Auto-select Items" checked={settings.autoSelectAll} onChange={(v) => setSettings((s) => ({ ...s, autoSelectAll: v }))} />
+          <SwitchSetting label="Save Import History" checked={settings.saveImportHistory} onChange={(v) => setSettings((s) => ({ ...s, saveImportHistory: v }))} />
         </SettingsGroup>
       </div>
     </section>
   );
 }
 
-function MetricCard({ label, value, color }: { label: string; value: number; color: "blue" | "orange" | "green" | "purple" }) {
-  const colors = {
-    blue: "bg-[#007aff]",
-    orange: "bg-[#ff9500]",
-    green: "bg-[#34c759]",
-    purple: "bg-[#af52de]",
-  };
-
-  return (
-    <div className="rounded-[26px] bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#1c1c1e] dark:ring-white/10">
-      <span className={`block h-3 w-3 rounded-full ${colors[color]}`} />
-      <p className="mt-5 text-[32px] font-bold tracking-[-0.03em]">{value}</p>
-      <p className="text-[14px] font-medium text-[#6d6d72] dark:text-[#a1a1a6]">{label}</p>
-    </div>
-  );
-}
-
-function CompactRow({ item, settings, onEdit }: { item: ScheduleItem; settings: UserSettings; onEdit: () => void }) {
-  return (
-    <button type="button" onClick={onEdit} className="ios-row w-full text-left">
-      <ItemGlyph type={item.type} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[16px] font-semibold">{item.title}</span>
-        <span className="text-[13px] text-[#6d6d72] dark:text-[#a1a1a6]">{timeSummary(item, settings)}</span>
-      </span>
-      <span className="text-[20px] text-[#c7c7cc]">›</span>
-    </button>
-  );
-}
-
-function ItemRow({
-  item,
-  settings,
-  active,
-  onEdit,
-  onDelete,
-  onUpdate,
-}: {
+/* ── ItemRow ── */
+function ItemRow({ item, settings, onDelete, onUpdate }: {
   item: ScheduleItem;
   settings: UserSettings;
-  active: boolean;
-  onEdit: () => void;
   onDelete: () => void;
   onUpdate: (patch: Partial<ScheduleItem>) => void;
 }) {
+  const summary = timeSummary(item, settings);
   return (
-    <div className={`ios-row ${active ? "bg-[#e8f2ff] dark:bg-[#12314a]" : ""} ${item.skipped ? "opacity-45" : ""}`}>
-      <button type="button" onClick={() => onUpdate({ skipped: !item.skipped })} className={`h-6 w-6 rounded-full border-2 ${item.skipped ? "border-[#c7c7cc]" : "border-[#007aff] bg-[#007aff]"}`} aria-label="Toggle selected" />
-      <button type="button" onClick={onEdit} className="min-w-0 flex-1 text-left">
-        <span className="flex items-center gap-2">
-          <ItemGlyph type={item.type} />
-          <span className="truncate text-[16px] font-semibold">{item.title}</span>
-        </span>
-        <span className="mt-1 block text-[13px] text-[#6d6d72] dark:text-[#a1a1a6]">{timeSummary(item, settings)}</span>
-        <span className="mt-2 flex flex-wrap gap-1.5">
-          <Badge tone={item.type === "calendar" ? "blue" : "orange"} label={item.type === "calendar" ? "Calendar" : "Reminder"} />
-          {item.duplicateAction === "skip" ? <Badge tone="red" label="Duplicate" /> : null}
-          {item.edited ? <Badge tone="gray" label="Edited" /> : null}
-        </span>
-      </button>
-      <div className="flex flex-col gap-2">
-        <button type="button" onClick={() => onUpdate({ type: item.type === "calendar" ? "reminder" : "calendar" })} className="text-[13px] font-semibold text-[#007aff]">Switch</button>
-        <button type="button" onClick={onDelete} className="text-[13px] font-semibold text-[#ff3b30]">Delete</button>
-      </div>
-    </div>
-  );
-}
-
-function EditorPanel({ item, settings, updateItem, onClose }: { item: ScheduleItem; settings: UserSettings; updateItem: (id: string, patch: Partial<ScheduleItem>) => void; onClose: () => void }) {
-  return (
-    <div className="mt-5 rounded-[28px] bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#1c1c1e] dark:ring-white/10">
-      <div className="mb-4 flex items-center justify-between">
-        <p className="text-[20px] font-bold tracking-[-0.01em]">Edit Item</p>
-        <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full bg-[#f2f2f7] text-[#007aff] dark:bg-[#2c2c2e]">x</button>
-      </div>
-      <div className="grid gap-3">
-        <TextField label="Title" value={item.title} onChange={(value) => updateItem(item.id, { title: value })} />
-        <TextField label="Date" type="date" value={item.date} onChange={(value) => updateItem(item.id, { date: value })} />
-        <SelectField label="Type" value={item.type} options={["calendar", "reminder"]} onChange={(value) => updateItem(item.id, { type: value as ScheduleItemType })} />
-        {item.type === "calendar" ? (
-          <>
-            <TextField label="Start" value={item.startTime || ""} onChange={(value) => updateItem(item.id, { startTime: value })} />
-            <TextField label="End" value={item.endTime || ""} onChange={(value) => updateItem(item.id, { endTime: value })} />
-            <TextField label="Location" value={item.location} onChange={(value) => updateItem(item.id, { location: value })} />
-            <TextField label="Calendar" value={item.calendar || settings.defaultCalendar} onChange={(value) => updateItem(item.id, { calendar: value })} />
-            <TextField label="Alert" value={item.alert} onChange={(value) => updateItem(item.id, { alert: value })} />
-            <SelectField label="Travel" value={String(item.travelTime)} options={["none", "manual", "automatic"]} onChange={(value) => updateItem(item.id, { travelTime: value })} />
-          </>
-        ) : (
-          <>
-            <TextField label="Due Time" value={item.dueTime || ""} onChange={(value) => updateItem(item.id, { dueTime: value })} />
-            <TextField label="List" value={item.reminderList || settings.defaultReminderList} onChange={(value) => updateItem(item.id, { reminderList: value })} />
-            <SelectField label="Column" value={item.reminderColumn || settings.defaultReminderColumn} options={COMMON_COLUMNS} onChange={(value) => updateItem(item.id, { reminderColumn: value })} />
-            <SelectField label="Priority" value={item.priority} options={["low", "medium", "high"]} onChange={(value) => updateItem(item.id, { priority: value as ScheduleItem["priority"] })} />
-            <TextField label="Alert" value={item.alert} onChange={(value) => updateItem(item.id, { alert: value })} />
-          </>
+    <div className={`card-row transition-opacity ${item.skipped ? "opacity-40" : ""}`}>
+      <button
+        type="button"
+        onClick={() => onUpdate({ skipped: !item.skipped })}
+        aria-label="Toggle selected"
+        className={`h-6 w-6 shrink-0 rounded-full border-2 transition-all duration-200 ${item.skipped ? "border-[#d1d5db] dark:border-[#374151]" : "border-[#007aff] bg-[#007aff] dark:border-[#3b82f6] dark:bg-[#3b82f6]"}`}
+      >
+        {!item.skipped && (
+          <svg className="mx-auto h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
         )}
-        <TextAreaField label="Notes" value={item.notes} onChange={(value) => updateItem(item.id, { notes: value })} />
-        <SwitchSetting label="Completed" checked={item.completed} onChange={(value) => updateItem(item.id, { completed: value })} />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#007aff]/10 text-[11px] font-bold text-[#007aff] dark:bg-[#3b82f6]/15 dark:text-[#60a5fa]">
+            {item.emoji || "📅"}
+          </span>
+          <span className="truncate text-[15px] font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">{item.title}</span>
+        </div>
+        <p className="mt-1 pl-9 text-[12px] text-[#5c6478] dark:text-[#8892a4]">{summary}</p>
+        {(item.duplicateAction === "skip" || item.edited) && (
+          <div className="mt-1.5 flex gap-1.5 pl-9">
+            {item.duplicateAction === "skip" && <MiniTag label="Duplicate" color="red" />}
+            {item.edited && <MiniTag label="Edited" color="gray" />}
+          </div>
+        )}
       </div>
+      <button type="button" onClick={onDelete} className="shrink-0 rounded-lg px-2 py-1.5 text-[12px] font-semibold text-[#ef4444] transition active:opacity-70 dark:text-[#f87171]">
+        ✕
+      </button>
     </div>
   );
 }
 
-function BulkBar({ onSelectAll, onDeselectAll, onCalendar, onReminder, onDeleteAll }: { onSelectAll: () => void; onDeselectAll: () => void; onCalendar: () => void; onReminder: () => void; onDeleteAll: () => void }) {
-  return (
-    <div className="no-scrollbar -mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-1">
-      <ChipButton label="Select All" onClick={onSelectAll} />
-      <ChipButton label="Deselect" onClick={onDeselectAll} />
-      <ChipButton label="To Calendar" onClick={onCalendar} />
-      <ChipButton label="To Reminder" onClick={onReminder} />
-      <ChipButton label="Delete All" danger onClick={onDeleteAll} />
-    </div>
-  );
-}
-
+/* ── BottomNav ── */
 function BottomNav({ activeTab, setActiveTab }: { activeTab: AppTab; setActiveTab: (tab: AppTab) => void }) {
-  const tabs: { id: AppTab; label: string; icon: string }[] = [
-    { id: "today", label: "Today", icon: "T" },
-    { id: "import", label: "Import", icon: "+" },
-    { id: "history", label: "History", icon: "H" },
-    { id: "settings", label: "Settings", icon: "S" },
+  const tabs: { id: AppTab; label: string; icon: ReactNode }[] = [
+    {
+      id: "import", label: "Import",
+      icon: <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m-8-8h16" /></svg>,
+    },
+    {
+      id: "history", label: "History",
+      icon: <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+    },
+    {
+      id: "settings", label: "Settings",
+      icon: <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+    },
   ];
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-[430px] border-t border-black/10 bg-[#fbfbfd]/90 px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-2xl dark:border-white/10 dark:bg-[#101012]/90">
-      <div className="grid grid-cols-4 gap-1">
+    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-[430px] border-t border-black/6 bg-[#f0f2f7]/85 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-2xl transition-colors dark:border-white/6 dark:bg-[#07080d]/85">
+      <div className="grid grid-cols-3 gap-1">
         {tabs.map((tab) => {
           const active = activeTab === tab.id;
           return (
-            <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1 rounded-2xl px-2 py-1.5 text-[11px] font-semibold ${active ? "text-[#007aff]" : "text-[#8e8e93]"}`}>
-              <span className={`grid h-7 w-7 place-items-center rounded-full text-[13px] ${active ? "bg-[#007aff] text-white" : "bg-[#f2f2f7] dark:bg-[#2c2c2e]"}`}>{tab.icon}</span>
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[11px] font-semibold transition-all duration-200 ${
+                active
+                  ? "text-[#007aff] dark:text-[#60a5fa]"
+                  : "text-[#9ca3af] dark:text-[#4b5563]"
+              }`}
+            >
+              <span className={`rounded-xl p-1.5 transition-all duration-200 ${active ? "bg-[#007aff]/10 dark:bg-[#60a5fa]/10" : ""}`}>
+                {tab.icon}
+              </span>
               {tab.label}
             </button>
           );
@@ -723,13 +556,16 @@ function BottomNav({ activeTab, setActiveTab }: { activeTab: AppTab; setActiveTa
   );
 }
 
-function IosButton({ label, onClick, tone }: { label: string; onClick: () => void; tone: "primary" | "secondary" }) {
+/* ── Primitives ── */
+function ActionButton({ label, onClick, tone }: { label: string; onClick: () => void; tone: "primary" | "ghost" }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-11 rounded-[15px] px-4 text-[15px] font-semibold transition active:scale-[0.98] ${
-        tone === "primary" ? "bg-[#007aff] text-white" : "bg-[#f2f2f7] text-[#007aff] dark:bg-[#2c2c2e] dark:text-[#64d2ff]"
+      className={`min-h-10 rounded-xl px-3 text-[14px] font-semibold transition-all active:scale-[0.97] ${
+        tone === "primary"
+          ? "bg-[#007aff] text-white shadow-sm shadow-blue-500/30 dark:bg-[#3b82f6]"
+          : "bg-[#f0f2f7] text-[#007aff] dark:bg-[#161820] dark:text-[#60a5fa]"
       }`}
     >
       {label}
@@ -737,121 +573,92 @@ function IosButton({ label, onClick, tone }: { label: string; onClick: () => voi
   );
 }
 
-function ChipButton({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
+function PillButton({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button type="button" onClick={onClick} className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold ${danger ? "bg-[#ffe8e6] text-[#ff3b30] dark:bg-[#3a1715]" : "bg-white text-[#007aff] shadow-sm ring-1 ring-black/5 dark:bg-[#1c1c1e] dark:text-[#64d2ff] dark:ring-white/10"}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold transition-all active:scale-[0.97] ${
+        danger
+          ? "bg-[#fee2e2] text-[#ef4444] dark:bg-[#2d0f0f] dark:text-[#f87171]"
+          : "bg-white text-[#007aff] shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:text-[#60a5fa] dark:ring-white/6"
+      }`}
+    >
       {label}
     </button>
   );
 }
 
-function IosGroupTitle({ title }: { title: string }) {
-  return <p className="mb-2 px-3 text-[13px] font-semibold uppercase tracking-[0.04em] text-[#8e8e93]">{title}</p>;
+function SectionLabel({ label }: { label: string }) {
+  return <p className="px-1 text-[12px] font-semibold uppercase tracking-widest text-[#9ca3af] dark:text-[#4b5563]">{label}</p>;
 }
 
-function EmptyState({ title, text }: { title: string; text: string }) {
+function MiniTag({ label, color }: { label: string; color: "red" | "gray" }) {
+  const cls = color === "red"
+    ? "bg-[#fee2e2] text-[#ef4444] dark:bg-[#2d0f0f] dark:text-[#f87171]"
+    : "bg-[#f3f4f6] text-[#6b7280] dark:bg-[#1f2937] dark:text-[#9ca3af]";
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
+}
+
+function EmptyState({ icon, title, text }: { icon?: string; title: string; text: string }) {
   return (
-    <div className="p-5 text-center">
-      <p className="text-[16px] font-semibold">{title}</p>
-      <p className="mt-1 text-[14px] leading-5 text-[#6d6d72] dark:text-[#a1a1a6]">{text}</p>
+    <div className="py-10 text-center">
+      {icon && <p className="mb-3 text-4xl">{icon}</p>}
+      <p className="text-[16px] font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">{title}</p>
+      <p className="mt-1 text-[13px] leading-5 text-[#5c6478] dark:text-[#8892a4]">{text}</p>
     </div>
   );
-}
-
-function Badge({ tone, label }: { tone: "blue" | "orange" | "red" | "gray"; label: string }) {
-  const colors = {
-    blue: "bg-[#e8f2ff] text-[#007aff] dark:bg-[#113457] dark:text-[#64d2ff]",
-    orange: "bg-[#fff3df] text-[#c66a00] dark:bg-[#3a2812] dark:text-[#ffd28a]",
-    red: "bg-[#ffe8e6] text-[#ff3b30] dark:bg-[#3a1715] dark:text-[#ff9f98]",
-    gray: "bg-[#f2f2f7] text-[#6d6d72] dark:bg-[#2c2c2e] dark:text-[#d1d1d6]",
-  };
-
-  return <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${colors[tone]}`}>{label}</span>;
-}
-
-function ItemGlyph({ type }: { type: ScheduleItemType }) {
-  return <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-[13px] font-bold text-white ${type === "calendar" ? "bg-[#007aff]" : "bg-[#ff9500]"}`}>{type === "calendar" ? "C" : "R"}</span>;
 }
 
 function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <IosGroupTitle title={title} />
-      <div className="ios-list">{children}</div>
+      <SectionLabel label={title} />
+      <div className="card-list mt-2">{children}</div>
     </div>
   );
 }
 
-function TextSetting({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function TextSetting({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
-    <label className="ios-row">
-      <span className="text-[16px]">{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} className="w-36 bg-transparent text-right text-[16px] text-[#6d6d72] outline-none dark:text-[#d1d1d6]" />
+    <label className="card-row">
+      <span className="text-[15px] text-[#0a0e1a] dark:text-[#eef0f8]">{label}</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} className="w-36 bg-transparent text-right text-[15px] text-[#5c6478] outline-none dark:text-[#8892a4]" />
     </label>
   );
 }
 
-function SelectSetting({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+function SelectSetting({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
   return (
-    <label className="ios-row">
-      <span className="text-[16px]">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="max-w-44 bg-transparent text-right text-[16px] text-[#6d6d72] outline-none dark:text-[#d1d1d6]">
-        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+    <label className="card-row">
+      <span className="text-[15px] text-[#0a0e1a] dark:text-[#eef0f8]">{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="max-w-44 bg-transparent text-right text-[15px] text-[#5c6478] outline-none dark:text-[#8892a4]">
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     </label>
   );
 }
 
-function SwitchSetting({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+function SwitchSetting({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="ios-row">
-      <span className="text-[16px]">{label}</span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="ios-switch" />
+    <label className="card-row">
+      <span className="text-[15px] text-[#0a0e1a] dark:text-[#eef0f8]">{label}</span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="ios-switch" />
     </label>
   );
 }
 
-function TextField({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
-  return (
-    <label>
-      <span className="mb-1 block px-1 text-[13px] font-semibold text-[#8e8e93]">{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="h-12 w-full rounded-[14px] bg-[#f2f2f7] px-3 text-[16px] outline-none dark:bg-[#2c2c2e]" />
-    </label>
-  );
-}
-
-function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  return (
-    <label>
-      <span className="mb-1 block px-1 text-[13px] font-semibold text-[#8e8e93]">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="h-12 w-full rounded-[14px] bg-[#f2f2f7] px-3 text-[16px] outline-none dark:bg-[#2c2c2e]">
-        {options.map((option) => <option key={option} value={option}>{option}</option>)}
-      </select>
-    </label>
-  );
-}
-
-function TextAreaField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return (
-    <label>
-      <span className="mb-1 block px-1 text-[13px] font-semibold text-[#8e8e93]">{label}</span>
-      <textarea value={value} onChange={(event) => onChange(event.target.value)} className="min-h-24 w-full resize-none rounded-[14px] bg-[#f2f2f7] p-3 text-[16px] outline-none dark:bg-[#2c2c2e]" />
-    </label>
-  );
-}
-
+/* ── Helpers ── */
 function timeSummary(item: ScheduleItem, settings: UserSettings): string {
   if (item.type === "calendar") {
     const start = item.startTime ? formatTimeLabel(item.startTime, settings.timeFormat) : "All day";
-    const end = item.endTime ? ` - ${formatTimeLabel(item.endTime, settings.timeFormat)}` : "";
+    const end = item.endTime ? ` – ${formatTimeLabel(item.endTime, settings.timeFormat)}` : "";
     return `${formatDisplayDate(item.date)} · ${start}${end}`;
   }
-
   const due = item.dueTime ? formatTimeLabel(item.dueTime, settings.timeFormat) : "No time";
   return `${formatDisplayDate(item.date)} · Due ${due}`;
 }
 
 function extractEmoji(title: string): string {
-  const match = title.match(/([\p{Emoji_Presentation}\p{Extended_Pictographic}])/gu);
-  return match?.[0] || "";
+  return title.match(/([\p{Emoji_Presentation}\p{Extended_Pictographic}])/gu)?.[0] ?? "";
 }
