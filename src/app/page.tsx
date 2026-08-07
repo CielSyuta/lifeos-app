@@ -59,6 +59,7 @@ type ExportSummary = {
 };
 
 export default function Home() {
+  const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<UserSettings>(() => loadSettings());
   const [scheduleText, setScheduleText] = useState(() => loadActiveImport()?.sourceText ?? SAMPLE_SCHEDULE);
   const [parsedItems, setParsedItems] = useState<ScheduleItem[]>(() => loadActiveImport()?.items ?? []);
@@ -68,6 +69,11 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState("Ready to parse your next schedule.");
   const [successSummary, setSuccessSummary] = useState<ExportSummary | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => setLoading(false), 900);
+    return () => clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     saveSettings(settings);
@@ -234,10 +240,23 @@ export default function Home() {
     setHistory((current) => current.filter((session) => session.id !== id));
   }
 
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#05070b]">
+        <div className="flex flex-col items-center gap-6">
+          <div className="text-[52px] font-bold tracking-tight text-white">LifeOS</div>
+          <div className="h-1 w-36 overflow-hidden rounded-full bg-white/20">
+            <div className="h-full w-2/5 animate-[shimmer_1.2s_ease-in-out_infinite] rounded-full bg-[#007aff]" />
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f4f4f8] text-[#111318] dark:bg-black dark:text-white">
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col overflow-hidden bg-[#f7f7fb] shadow-2xl shadow-black/20 dark:bg-black">
-        <StatusBar />
+        <StatusBar timeFormat={settings.timeFormat} />
         <div className="flex-1 overflow-y-auto px-4 pb-28 pt-2">
           {activeTab === "today" ? (
             <TodayView
@@ -306,11 +325,25 @@ export default function Home() {
   );
 }
 
-function StatusBar() {
+function StatusBar({ timeFormat }: { timeFormat: "12h" | "24h" }) {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const tick = () => setNow(new Date());
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const timeStr = now.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: timeFormat === "12h",
+  });
+
   return (
     <div className="sticky top-0 z-20 bg-[#f7f7fb]/85 px-5 pb-2 pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-xl dark:bg-black/80">
       <div className="flex items-center justify-between text-[13px] font-semibold">
-        <span>9:41</span>
+        <span>{timeStr}</span>
         <div className="flex items-center gap-1.5">
           <span className="h-2.5 w-4 rounded-sm border border-current" />
           <span className="h-2.5 w-2 rounded-sm bg-current" />
