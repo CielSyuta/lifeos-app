@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="LifeOS icon">
+  <rect width="256" height="256" rx="56" fill="#05070b"/>
+  <rect x="48" y="44" width="160" height="168" rx="24" fill="#1b2a4a"/>
+  <rect x="72" y="72" width="112" height="20" rx="10" fill="#5dd3c6"/>
+  <rect x="72" y="104" width="80" height="16" rx="8" fill="#8ae4b2"/>
+  <rect x="72" y="136" width="88" height="16" rx="8" fill="#f9d56e"/>
+  <circle cx="188" cy="188" r="24" fill="#ff6b6b"/>
+</svg>
