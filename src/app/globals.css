@@ -10,11 +10,11 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --animate-shimmer: shimmer 1.2s ease-in-out infinite;
-  @keyframes shimmer {
-    0% { transform: translateX(-150%); }
-    100% { transform: translateX(350%); }
-  }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-150%); }
+  100% { transform: translateX(350%); }
 }
 
 * {
