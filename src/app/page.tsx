@@ -342,7 +342,7 @@ function StatusBar({ timeFormat }: { timeFormat: "12h" | "24h" }) {
 
   useEffect(() => {
     const tick = () => setNow(new Date());
-    const id = setInterval(tick, 30_000);
+    const id = setInterval(tick, 1_000);
     return () => clearInterval(id);
   }, []);
 
@@ -352,10 +352,17 @@ function StatusBar({ timeFormat }: { timeFormat: "12h" | "24h" }) {
     hour12: timeFormat === "12h",
   });
 
+  const dateStr = now.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+
   return (
     <div className="sticky top-0 z-20 bg-[#f7f7fb]/85 px-5 pb-2 pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-xl dark:bg-black/80">
       <div className="flex items-center justify-between text-[13px] font-semibold">
         <span>{timeStr}</span>
+        <span>{dateStr}</span>
         <div className="flex items-center gap-1.5">
           <span className="h-2.5 w-4 rounded-sm border border-current" />
           <span className="h-2.5 w-2 rounded-sm bg-current" />
