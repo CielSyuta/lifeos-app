@@ -12,6 +12,11 @@
   --font-mono: var(--font-geist-mono);
 }
 
+@keyframes shimmer {
+  0% { transform: translateX(-150%); }
+  100% { transform: translateX(350%); }
+}
+
 * {
   box-sizing: border-box;
 }
