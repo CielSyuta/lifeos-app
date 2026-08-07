@@ -132,7 +132,19 @@ export default function Home() {
   }
 
   function updateMany(ids: string[], patch: Partial<ScheduleItem>) {
-    let nextItems = parsedItems.map((item) => (ids.includes(item.id) ? { ...item, ...patch, edited: true } : item));
+    let nextItems = parsedItems.map((item) => {
+      if (!ids.includes(item.id)) {
+        return item;
+      }
+      const nextItem = { ...item, ...patch, edited: true };
+      if (patch.type !== undefined) {
+        nextItem.inferredType = patch.type;
+        if (patch.type === "reminder" && !nextItem.dueTime) {
+          nextItem.dueTime = nextItem.startTime;
+        }
+      }
+      return nextItem;
+    });
     nextItems = detectDuplicateItems(nextItems);
     setParsedItems(nextItems);
     setActiveImport((current) => (current ? { ...current, items: nextItems } : current));

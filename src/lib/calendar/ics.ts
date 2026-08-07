@@ -99,7 +99,7 @@ function formatAlarmTrigger(alert: string): string {
   if (minutesMatch) {
     return `-PT${minutesMatch[1]}M`;
   }
-  if (normalized.includes("at due")) {
+  if (normalized.includes("at_due") || normalized.includes("at due")) {
     return "-PT0M";
   }
   return "-PT30M";

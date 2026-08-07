@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Schedule Import",
+  title: "LifeOS",
   description: "Turn pasted schedules into calendar events, reminders, and Apple-friendly exports.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
@@ -25,6 +25,8 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: [
       { url: "/apple-touch-icon.svg", type: "image/svg+xml" },
     ],
   },
