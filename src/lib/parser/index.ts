@@ -437,7 +437,7 @@ export function formatDisplayDate(date: string): string {
     return "";
   }
   const [year, month, day] = date.split("-").map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
+  const parsed = new Date(year, month - 1, day);
   return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
