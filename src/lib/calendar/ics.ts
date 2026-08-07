@@ -19,12 +19,12 @@ export function buildIcsContent(items: ScheduleItem[]): string {
       lines.push(`DTEND;VALUE=DATE:${formatIcsDate(endDate)}`);
     } else {
       const startDateTime = combineDateAndTime(item.date, item.startTime || "09:00");
-      lines.push(`DTSTART:${formatIcsDateTime(startDateTime)}`);
+      lines.push(`DTSTART:${formatIcsDateTimeLocal(startDateTime)}`);
       let endDateTime = combineDateAndTime(item.date, item.endTime || item.startTime || "10:00");
       if (item.endTime && item.startTime && isOvernight(item.startTime, item.endTime)) {
         endDateTime = addDaysToDate(endDateTime, 1);
       }
-      lines.push(`DTEND:${formatIcsDateTime(endDateTime)}`);
+      lines.push(`DTEND:${formatIcsDateTimeLocal(endDateTime)}`);
     }
 
     lines.push(`SUMMARY:${escapeText(item.title)}`);
@@ -52,19 +52,20 @@ export function buildIcsContent(items: ScheduleItem[]): string {
 function combineDateAndTime(dateValue: string, timeValue: string): Date {
   const [year, month, day] = dateValue.split("-").map(Number);
   const [hour, minute] = timeValue.split(":").map(Number);
-  return new Date(Date.UTC(year, month - 1, day, hour, minute));
+  // Use local time instead of UTC
+  return new Date(year, month - 1, day, hour, minute);
 }
 
 function addDays(dateValue: string, days: number): string {
   const [year, month, day] = dateValue.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + days);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
   return formatIcsDate(date);
 }
 
 function addDaysToDate(date: Date, days: number): Date {
   const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + days);
+  next.setDate(next.getDate() + days);
   return next;
 }
 
@@ -73,11 +74,17 @@ function formatIcsDate(date: Date | string): string {
     const [year, month, day] = date.split("-").map(Number);
     return `${year.toString().padStart(4, "0")}${String(month).padStart(2, "0")}${String(day).padStart(2, "0")}`;
   }
-  return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`;
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function formatIcsDateTime(date: Date): string {
   return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}T${String(date.getUTCHours()).padStart(2, "0")}${String(date.getUTCMinutes()).padStart(2, "0")}${String(date.getUTCSeconds()).padStart(2, "0")}Z`;
+}
+
+function formatIcsDateTimeLocal(date: Date): string {
+  // Format local time without timezone indicator (floating time)
+  // This allows Apple Calendar to interpret it in the user's local timezone
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}${String(date.getSeconds()).padStart(2, "0")}`;
 }
 
 function isOvernight(startTime: string, endTime: string): boolean {
