@@ -1,4 +1,4 @@
-import { createDefaultSettings } from "../parser";
+import { createDefaultSettings, parseTravelTimeValue } from "../parser";
 import { type ImportSession, type UserSettings } from "../types";
 
 const SETTINGS_KEY = "schedule-parser-settings";
@@ -39,9 +39,8 @@ export function loadSettings(): UserSettings {
 function parseLegacyTravelTime(value?: string): number | null {
   const normalized = value?.toLowerCase();
   if (!normalized || normalized === "none") return null;
-  if (normalized === "manual") return 30;
-  if (normalized === "automatic") return 45;
-  return null;
+  if (normalized === "manual" || normalized === "automatic") return null;
+  return parseTravelTimeValue(normalized, null);
 }
 
 export function saveSettings(settings: UserSettings): void {

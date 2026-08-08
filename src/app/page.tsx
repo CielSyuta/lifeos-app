@@ -148,6 +148,8 @@ export default function Home() {
   }
 
   function addItem(item: ScheduleItem) {
+    const isFirstAdd = addedIds.size === 0;
+
     if (item.type === "calendar") {
       const icsContent = buildIcsContent([item]);
       const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
@@ -160,7 +162,7 @@ export default function Home() {
       setStatusMessage("Event file generated. Open it to add to Apple Calendar.");
     } else {
       const payload = buildShortcutPayload([item]);
-      window.location.href = buildShortcutUrl(payload);
+      window.location.assign(buildShortcutUrl(payload));
       setStatusMessage("Reminder handoff opened. Complete the shortcut flow in iOS.");
     }
 
@@ -170,19 +172,19 @@ export default function Home() {
       return next;
     });
 
-    const now = new Date().toISOString();
-    const session: ImportSession = {
-      id: crypto.randomUUID(),
-      createdAt: now,
-      sourceText: scheduleText,
-      items: parsedItems,
-      exportDate: now,
-      eventCount: parsedItems.filter((entry) => entry.type === "calendar").length,
-      reminderCount: parsedItems.filter((entry) => entry.type === "reminder").length,
-      notes: `Added ${item.type}`,
-    };
-
-    if (settings.saveImportHistory) {
+    if (settings.saveImportHistory && isFirstAdd) {
+      const now = new Date().toISOString();
+      const session: ImportSession = {
+        id: activeImport?.id ?? crypto.randomUUID(),
+        createdAt: activeImport?.createdAt ?? now,
+        sourceText: scheduleText,
+        items: parsedItems,
+        exportDate: now,
+        eventCount: parsedItems.filter((entry) => entry.type === "calendar").length,
+        reminderCount: parsedItems.filter((entry) => entry.type === "reminder").length,
+        notes: "Started individual add flow",
+      };
+      setActiveImport(session);
       setHistory((current) => [session, ...current].slice(0, 20));
     }
   }
@@ -371,6 +373,7 @@ export default function Home() {
 
       {editingItem && (
         <EditSheet
+          key={editingItem.id}
           item={editingItem}
           settings={settings}
           onClose={() => setEditingId(null)}
@@ -396,10 +399,6 @@ function EditSheet({
   onSave: (patch: Partial<ScheduleItem>) => void;
 }) {
   const [form, setForm] = useState<ScheduleItem>(item);
-
-  useEffect(() => {
-    setForm(item);
-  }, [item]);
 
   return (
     <div className="fixed inset-0 z-40 bg-black/40 p-4">

@@ -112,6 +112,8 @@ function formatAlarmTrigger(alert: string): string | null {
       return null;
     case "at_time":
       return "-PT0M";
+    case "at_due_time":
+      return null;
     case "5m":
     case "10m":
     case "15m":
@@ -125,7 +127,7 @@ function formatAlarmTrigger(alert: string): string | null {
     case "1d":
       return "-P1D";
     default:
-      return "-PT30M";
+      return null;
   }
 }
 

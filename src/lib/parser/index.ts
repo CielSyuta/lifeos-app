@@ -76,15 +76,44 @@ function parseCanonicalBlocks(input: string, settings: UserSettings): { items: S
 
 function parseLegacyStructuredSchedule(input: string, settings: UserSettings): { items: ScheduleItem[]; remainder: string } {
   const items: ScheduleItem[] = [];
-  const pattern = /^\s*\[(EVENT|TASK)\]\s*$([\s\S]*?)(?=^\s*\[(?:EVENT|TASK|\/EVENT|\/TASK)\]\s*$|\s*$)/gim;
+  const lines = input.split(/\r?\n/);
+  const consumed = new Set<number>();
 
-  const remainder = input.replace(pattern, (full, kind: string, body: string) => {
-    const parsed = parseStructuredItem(kind.toLowerCase() === "event" ? "calendar" : "reminder", parseStructuredValues(body), settings, "legacy");
+  for (let index = 0; index < lines.length; index += 1) {
+    const marker = lines[index]?.trim().match(/^\[(EVENT|TASK)\]$/i);
+    if (!marker) {
+      continue;
+    }
+
+    const kind = marker[1]?.toLowerCase() === "event" ? "calendar" : "reminder";
+    consumed.add(index);
+
+    const blockLines: string[] = [];
+    let cursor = index + 1;
+    while (cursor < lines.length) {
+      const candidate = lines[cursor]?.trim() ?? "";
+      if (/^\[(EVENT|TASK)\]$/i.test(candidate)) {
+        break;
+      }
+      if (/^\[\/(EVENT|TASK)\]$/i.test(candidate)) {
+        consumed.add(cursor);
+        cursor += 1;
+        break;
+      }
+      consumed.add(cursor);
+      blockLines.push(lines[cursor] ?? "");
+      cursor += 1;
+    }
+
+    const parsed = parseStructuredItem(kind, parseStructuredValues(blockLines.join("\n")), settings, "legacy");
     if (parsed) {
       items.push(parsed);
     }
-    return "\n";
-  }).replace(/^\s*\[\/(EVENT|TASK)\]\s*$/gim, "\n");
+  }
+
+  const remainder = lines
+    .filter((line, index) => !consumed.has(index) && !/^\s*\[\/(EVENT|TASK)\]\s*$/i.test(line))
+    .join("\n");
 
   return { items, remainder };
 }
