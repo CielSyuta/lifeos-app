@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "LifeOS",
-    short_name: "LifeOS",
-    description: "A mobile-first scheduler for turning pasted plans into calendar events and reminders.",
+    name: "Schedule Parser",
+    short_name: "Parser",
+    description: "Paste a schedule, parse it, and add items to Apple Calendar or Reminders.",
     start_url: "/",
     display: "standalone",
     background_color: "#05070b",

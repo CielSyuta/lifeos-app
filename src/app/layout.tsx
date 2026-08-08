@@ -14,12 +14,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LifeOS",
-  description: "Turn pasted schedules into calendar events, reminders, and Apple-friendly exports.",
+  title: "Schedule Parser",
+  description: "Paste a schedule, parse it, then add events to Apple Calendar or tasks to Reminders.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "LifeOS",
+    title: "Schedule Parser",
     statusBarStyle: "black-translucent",
   },
   icons: {

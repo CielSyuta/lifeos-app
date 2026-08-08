@@ -4,13 +4,13 @@ export function buildIcsContent(items: ScheduleItem[]): string {
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//LifeOS//EN",
+    "PRODID:-//Schedule Parser//EN",
     "CALSCALE:GREGORIAN",
   ];
 
   for (const item of items.filter((entry) => entry.type === "calendar")) {
     lines.push("BEGIN:VEVENT");
-    lines.push(`UID:${item.id}@lifeos.app`);
+    lines.push(`UID:${item.id}@scheduleparser.app`);
     lines.push(`DTSTAMP:${formatIcsDateTime(new Date())}`);
 
     if (item.allDay) {
@@ -28,20 +28,29 @@ export function buildIcsContent(items: ScheduleItem[]): string {
     }
 
     lines.push(`SUMMARY:${escapeText(item.title)}`);
+
     if (item.notes) {
       lines.push(`DESCRIPTION:${escapeText(item.notes)}`);
     }
-    if (item.location) {
-      lines.push(`LOCATION:${escapeText(item.location)}`);
+
+    const location = buildLocation(item);
+    if (location) {
+      lines.push(`LOCATION:${escapeText(location)}`);
     }
-    if (item.alert) {
-      const trigger = formatAlarmTrigger(item.alert);
+
+    if (item.url) {
+      lines.push(`URL:${escapeText(item.url)}`);
+    }
+
+    const trigger = formatAlarmTrigger(item.alert);
+    if (trigger) {
       lines.push("BEGIN:VALARM");
       lines.push("ACTION:DISPLAY");
       lines.push(`DESCRIPTION:${escapeText(item.title)}`);
       lines.push(`TRIGGER:${trigger}`);
       lines.push("END:VALARM");
     }
+
     lines.push("END:VEVENT");
   }
 
@@ -49,10 +58,16 @@ export function buildIcsContent(items: ScheduleItem[]): string {
   return lines.join("\r\n");
 }
 
+function buildLocation(item: ScheduleItem): string {
+  if (item.location && item.address) {
+    return `${item.location} — ${item.address}`;
+  }
+  return item.address || item.location;
+}
+
 function combineDateAndTime(dateValue: string, timeValue: string): Date {
   const [year, month, day] = dateValue.split("-").map(Number);
   const [hour, minute] = timeValue.split(":").map(Number);
-  // Use local time instead of UTC
   return new Date(year, month - 1, day, hour, minute);
 }
 
@@ -82,8 +97,6 @@ function formatIcsDateTime(date: Date): string {
 }
 
 function formatIcsDateTimeLocal(date: Date): string {
-  // Format local time without timezone indicator (floating time)
-  // This allows Apple Calendar to interpret it in the user's local timezone
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}${String(date.getSeconds()).padStart(2, "0")}`;
 }
 
@@ -93,16 +106,27 @@ function isOvernight(startTime: string, endTime: string): boolean {
   return endHour * 60 + endMinute < startHour * 60 + startMinute;
 }
 
-function formatAlarmTrigger(alert: string): string {
-  const normalized = alert.toLowerCase();
-  const minutesMatch = normalized.match(/(\d+)\s*m/);
-  if (minutesMatch) {
-    return `-PT${minutesMatch[1]}M`;
+function formatAlarmTrigger(alert: string): string | null {
+  switch (alert) {
+    case "none":
+      return null;
+    case "at_time":
+      return "-PT0M";
+    case "5m":
+    case "10m":
+    case "15m":
+    case "30m": {
+      return `-PT${alert.replace("m", "")}M`;
+    }
+    case "1h":
+      return "-PT1H";
+    case "2h":
+      return "-PT2H";
+    case "1d":
+      return "-P1D";
+    default:
+      return "-PT30M";
   }
-  if (normalized.includes("at_due") || normalized.includes("at due")) {
-    return "-PT0M";
-  }
-  return "-PT30M";
 }
 
 function escapeText(value: string): string {

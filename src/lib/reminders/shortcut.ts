@@ -11,6 +11,9 @@ export function buildShortcutPayload(items: ScheduleItem[]): ShortcutPayload {
         list: item.reminderList,
         column: item.reminderColumn,
         priority: item.priority,
+        alert: item.alert,
+        repeat: item.repeat,
+        url: item.url,
         notes: item.notes,
       })),
   };
@@ -22,5 +25,5 @@ export function buildShortcutJson(items: ScheduleItem[]): string {
 
 export function buildShortcutUrl(payload: ShortcutPayload): string {
   const encoded = encodeURIComponent(JSON.stringify(payload));
-  return `shortcut://run-shortcut?name=LifeOS%20Import&input=text&text=${encoded}`;
+  return `shortcut://run-shortcut?name=Parser%20Import&input=text&text=${encoded}`;
 }
