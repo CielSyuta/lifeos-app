@@ -10,7 +10,7 @@ import {
   parseSchedule,
   resolveExportItems,
 } from "@/lib/parser";
-import { loadActiveImport, loadHistory, loadSettings, saveActiveImport, saveHistory, saveSettings } from "@/lib/storage";
+import { clearAllData, loadActiveImport, loadHistory, loadSettings, saveActiveImport, saveHistory, saveSettings } from "@/lib/storage";
 import type { ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
 
 const SAMPLE_SCHEDULE = `Date: Saturday, August 8, 2026
@@ -446,6 +446,12 @@ function HistoryView({ history, onReopen, onDelete }: { history: ImportSession[]
 
 /* ── SettingsView ── */
 function SettingsView({ settings, setSettings }: { settings: UserSettings; setSettings: (fn: (s: UserSettings) => UserSettings) => void }) {
+  function handleDeleteAllData() {
+    if (!window.confirm("Delete all saved data? This cannot be undone.")) return;
+    clearAllData();
+    window.location.reload();
+  }
+
   return (
     <section>
       <PageHeader eyebrow="Preferences" title="Settings" subtitle="Defaults saved locally on this device." />
@@ -463,6 +469,10 @@ function SettingsView({ settings, setSettings }: { settings: UserSettings; setSe
           <SwitchSetting label="Auto-detect Type" checked={settings.autoDetectType} onChange={(v) => setSettings((s) => ({ ...s, autoDetectType: v }))} />
           <SwitchSetting label="Auto-select Items" checked={settings.autoSelectAll} onChange={(v) => setSettings((s) => ({ ...s, autoSelectAll: v }))} />
           <SwitchSetting label="Save Import History" checked={settings.saveImportHistory} onChange={(v) => setSettings((s) => ({ ...s, saveImportHistory: v }))} />
+        </SettingsGroup>
+        <SettingsGroup title="Debug">
+          <ButtonSetting label="Reload Page" onClick={() => window.location.reload()} />
+          <ButtonSetting label="Delete All Data" destructive onClick={handleDeleteAllData} />
         </SettingsGroup>
       </div>
     </section>
@@ -645,6 +655,14 @@ function SwitchSetting({ label, checked, onChange }: { label: string; checked: b
       <span className="text-[15px] text-[#0a0e1a] dark:text-[#eef0f8]">{label}</span>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="ios-switch" />
     </label>
+  );
+}
+
+function ButtonSetting({ label, onClick, destructive }: { label: string; onClick: () => void; destructive?: boolean }) {
+  return (
+    <button type="button" onClick={onClick} className="card-row w-full justify-between">
+      <span className={`text-[15px] ${destructive ? "text-[#ef4444] dark:text-[#f87171]" : "text-[#007aff] dark:text-[#60a5fa]"}`}>{label}</span>
+    </button>
   );
 }
 

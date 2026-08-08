@@ -87,3 +87,12 @@ export function saveActiveImport(session: ImportSession | null): void {
 
   window.localStorage.setItem(ACTIVE_IMPORT_KEY, JSON.stringify(session));
 }
+
+export function clearAllData(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.removeItem(SETTINGS_KEY);
+  window.localStorage.removeItem(HISTORY_KEY);
+  window.localStorage.removeItem(ACTIVE_IMPORT_KEY);
+}
