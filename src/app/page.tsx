@@ -1,44 +1,48 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { buildIcsContent } from "@/lib/calendar/ics";
 import {
   detectDuplicateItems,
   formatDisplayDate,
   formatTimeLabel,
   learnItemRule,
+  normalizeTime,
   parseSchedule,
-  resolveExportItems,
 } from "@/lib/parser";
+import { buildShortcutPayload, buildShortcutUrl } from "@/lib/reminders/shortcut";
 import { clearAllData, loadActiveImport, loadHistory, loadSettings, saveActiveImport, saveHistory, saveSettings } from "@/lib/storage";
 import type { ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
 
-const SAMPLE_SCHEDULE = `Date: Saturday, August 8, 2026
+const SAMPLE_SCHEDULE = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-10
+Start: 10:45 AM
+End: 12:45 PM
+Address: 123 Main St, Springfield, MA 01103
+Notes: Pull day
+[/EVENT]
 
-8/8/26 7:30 AM - 8:00 AM
-Morning Routine
+[TASK]
+Title: 🧺 Start Laundry
+Date: 2026-08-10
+Due: 9:45 AM
+Address:
+List: Life General
+Column: Laundry
+Notes:
+[/TASK]
 
-8/8/26 8:00 AM - 8:30 AM
-Breakfast
-
-8/8/26 9:30 AM - 11:30 AM
-Gym
-
-8/8/26 1:00 PM
-Clean Bathroom
-
-8/8/26 3:30 PM
-Pack Work Bag
-
-8/8/26 5:00 PM - 1:45 AM
-McDonald's Enfield`;
+[EVENT]
+Title: 🍟 McDonald's | Enfield
+Date: 2026-08-10
+Start: 4:00 PM
+End: 12:45 AM
+Address: 34 Hazard Ave, Enfield, CT 06082
+Notes: Work
+[/EVENT]`;
 
 type AppTab = "import" | "history" | "settings";
-
-type ExportSummary = {
-  eventCount: number;
-  icsContent: string;
-};
 
 export default function Home() {
   const [loading, setLoading] = useState(true);
@@ -49,13 +53,15 @@ export default function Home() {
   const [activeImport, setActiveImport] = useState<ImportSession | null>(() => loadActiveImport());
   const [activeTab, setActiveTab] = useState<AppTab>("import");
   const [statusMessage, setStatusMessage] = useState("Ready to parse your next schedule.");
-  const [successSummary, setSuccessSummary] = useState<ExportSummary | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  /* Resolve dark mode: use system preference as initial value, override with settings */
-  const [systemDark, setSystemDark] = useState(false);
+  const [systemDark, setSystemDark] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : false
+  );
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    setSystemDark(mq.matches);
     const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
@@ -71,8 +77,6 @@ export default function Home() {
   useEffect(() => { saveHistory(history); }, [history]);
   useEffect(() => { saveActiveImport(activeImport); }, [activeImport]);
 
-  const eventCount = parsedItems.filter((item) => item.type === "calendar" && !item.skipped).length;
-
   const groupedItems = useMemo(() => {
     const groups = new Map<string, ScheduleItem[]>();
     for (const item of parsedItems) {
@@ -82,6 +86,9 @@ export default function Home() {
     }
     return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [parsedItems]);
+
+  const addedCount = parsedItems.filter((i) => i.added).length;
+  const validCount = parsedItems.filter((i) => !i.validationError).length;
 
   function updateItem(id: string, patch: Partial<ScheduleItem>) {
     const nextItems = parsedItems.map((item) => {
@@ -95,19 +102,6 @@ export default function Home() {
     setActiveImport((cur) => (cur ? { ...cur, items: nextItems } : cur));
     const edited = nextItems.find((item) => item.id === id);
     if (edited) setSettings((cur) => learnItemRule(edited, cur));
-  }
-
-  function updateMany(ids: string[], patch: Partial<ScheduleItem>) {
-    const nextItems = detectDuplicateItems(
-      parsedItems.map((item) => {
-        if (!ids.includes(item.id)) return item;
-        const nextItem = { ...item, ...patch, edited: true };
-        if (patch.type !== undefined) nextItem.inferredType = patch.type;
-        return nextItem;
-      })
-    );
-    setParsedItems(nextItems);
-    setActiveImport((cur) => (cur ? { ...cur, items: nextItems } : cur));
   }
 
   function deleteItem(id: string) {
@@ -129,39 +123,28 @@ export default function Home() {
       reminderCount: 0,
     };
     setActiveImport(session);
-    setSuccessSummary(null);
-    setStatusMessage(`Parsed ${nextItems.length} items. Review, then export.`);
+    const invalidCount = nextItems.filter((i) => i.validationError).length;
+    const msg = invalidCount > 0
+      ? `Parsed ${nextItems.length} items — ${invalidCount} need attention.`
+      : `Parsed ${nextItems.length} items. Tap Add to import each one.`;
+    setStatusMessage(msg);
   }
 
-  function handleExport() {
-    if (!parsedItems.length) { setStatusMessage("Parse something first."); return; }
-    const items = resolveExportItems(parsedItems);
-    const icsContent = buildIcsContent(items);
-    const now = new Date().toISOString();
-    const session: ImportSession = {
-      id: crypto.randomUUID(),
-      createdAt: now,
-      sourceText: scheduleText,
-      items: parsedItems,
-      exportDate: now,
-      eventCount: items.filter((i) => i.type === "calendar").length,
-      reminderCount: 0,
-      notes: `Exported ${items.length} items`,
-    };
-    if (settings.saveImportHistory) setHistory((cur) => [session, ...cur].slice(0, 20));
-    setActiveImport(session);
-    setSuccessSummary({ eventCount: session.eventCount, icsContent });
-    setStatusMessage("Export ready — download your .ics file.");
-  }
-
-  function downloadIcs() {
-    if (!successSummary) return;
-    const blob = new Blob([successSummary.icsContent], { type: "text/calendar;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "lifeos-import.ics"; a.click();
-    URL.revokeObjectURL(url);
-    setStatusMessage("Downloaded .ics — open it on iPhone to add to Apple Calendar.");
+  function addSingleItem(item: ScheduleItem) {
+    if (item.type === "calendar") {
+      const ics = buildIcsContent([item]);
+      const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${item.title || "event"}.ics`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      const payload = buildShortcutPayload([item]);
+      window.open(buildShortcutUrl(payload), "_blank");
+    }
+    updateItem(item.id, { added: true });
   }
 
   function reopenSession(session: ImportSession) {
@@ -171,6 +154,8 @@ export default function Home() {
     setActiveTab("import");
     setStatusMessage("History import reopened.");
   }
+
+  const editingItem = editingId ? parsedItems.find((i) => i.id === editingId) ?? null : null;
 
   if (loading) {
     return (
@@ -209,17 +194,16 @@ export default function Home() {
                   groupedItems={groupedItems}
                   settings={settings}
                   statusMessage={statusMessage}
-                  successSummary={successSummary}
-                  eventCount={eventCount}
+                  addedCount={addedCount}
+                  validCount={validCount}
                   updateItem={updateItem}
-                  updateMany={updateMany}
                   deleteItem={deleteItem}
-                  deleteAll={() => { setParsedItems([]); setActiveImport(null); setSuccessSummary(null); }}
+                  deleteAll={() => { setParsedItems([]); setActiveImport(null); }}
                   parseCurrentSchedule={parseCurrentSchedule}
-                  handleExport={handleExport}
-                  downloadIcs={downloadIcs}
+                  addSingleItem={addSingleItem}
+                  onEdit={(id) => setEditingId(id)}
                   loadSample={() => { setScheduleText(SAMPLE_SCHEDULE); setStatusMessage("Sample schedule loaded."); }}
-                  clearInput={() => { setScheduleText(""); setParsedItems([]); setActiveImport(null); setSuccessSummary(null); }}
+                  clearInput={() => { setScheduleText(""); setParsedItems([]); setActiveImport(null); }}
                 />
               </div>
             )}
@@ -237,6 +221,13 @@ export default function Home() {
           <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
         </div>
       </main>
+      {editingItem && (
+        <EditModal
+          item={editingItem}
+          onSave={(patch) => updateItem(editingItem.id, patch)}
+          onClose={() => setEditingId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -266,7 +257,7 @@ function StatusBar({ timeFormat }: { timeFormat: "12h" | "24h" }) {
   );
 }
 
-/* ── Page header ── */
+/* ── PageHeader ── */
 function PageHeader({ eyebrow, title, subtitle }: { eyebrow?: string; title: string; subtitle?: string }) {
   return (
     <header className="mb-6 pt-1">
@@ -285,24 +276,22 @@ function ImportView(props: {
   groupedItems: [string, ScheduleItem[]][];
   settings: UserSettings;
   statusMessage: string;
-  successSummary: ExportSummary | null;
-  eventCount: number;
+  addedCount: number;
+  validCount: number;
   updateItem: (id: string, patch: Partial<ScheduleItem>) => void;
-  updateMany: (ids: string[], patch: Partial<ScheduleItem>) => void;
   deleteItem: (id: string) => void;
   deleteAll: () => void;
   parseCurrentSchedule: () => void;
-  handleExport: () => void;
-  downloadIcs: () => void;
+  addSingleItem: (item: ScheduleItem) => void;
+  onEdit: (id: string) => void;
   loadSample: () => void;
   clearInput: () => void;
 }) {
   const [inputOpen, setInputOpen] = useState(false);
-  const selectedIds = props.parsedItems.filter((i) => !i.skipped).map((i) => i.id);
 
   return (
     <section>
-      <PageHeader eyebrow="Import" title="Your Schedule" subtitle="Paste, parse, and export events to Apple Calendar." />
+      <PageHeader eyebrow="Import" title="Your Schedule" subtitle="Paste, parse, and add events to Apple Calendar." />
 
       {/* Input card */}
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/5 transition-all dark:bg-[#0f1117] dark:ring-white/6">
@@ -323,7 +312,7 @@ function ImportView(props: {
               value={props.scheduleText}
               onChange={(e) => props.setScheduleText(e.target.value)}
               className="min-h-[130px] w-full resize-none rounded-xl bg-[#f0f2f7] p-3 text-[15px] leading-6 text-[#0a0e1a] outline-none placeholder:text-[#9ca3af] dark:bg-[#161820] dark:text-[#eef0f8] dark:placeholder:text-[#5c6478]"
-              placeholder="Paste a ChatGPT schedule here…"
+              placeholder="Paste a ChatGPT schedule or use the canonical [EVENT]/[TASK] format…"
             />
           </div>
         </div>
@@ -341,19 +330,19 @@ function ImportView(props: {
 
       {props.parsedItems.length > 0 && (
         <>
-          {/* Preview header */}
+          {/* Preview header + progress */}
           <div className="mt-6 flex items-center justify-between">
             <SectionLabel label="Preview" />
-            <span className="rounded-full bg-[#007aff]/10 px-2.5 py-1 text-[12px] font-semibold text-[#007aff] dark:bg-[#60a5fa]/10 dark:text-[#60a5fa]">
-              {props.parsedItems.length} items
-            </span>
-          </div>
-
-          {/* Bulk actions */}
-          <div className="no-scrollbar -mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-1">
-            <PillButton label="Select All" onClick={() => props.updateMany(props.parsedItems.map((i) => i.id), { skipped: false })} />
-            <PillButton label="Deselect" onClick={() => props.updateMany(props.parsedItems.map((i) => i.id), { skipped: true })} />
-            <PillButton label="Delete All" danger onClick={props.deleteAll} />
+            <div className="flex items-center gap-2">
+              {props.validCount > 0 && (
+                <span className="text-[12px] font-medium text-[#5c6478] dark:text-[#8892a4]">
+                  {props.addedCount} of {props.validCount} added
+                </span>
+              )}
+              <span className="rounded-full bg-[#007aff]/10 px-2.5 py-1 text-[12px] font-semibold text-[#007aff] dark:bg-[#60a5fa]/10 dark:text-[#60a5fa]">
+                {props.parsedItems.length} items
+              </span>
+            </div>
           </div>
 
           {/* Item groups */}
@@ -369,6 +358,8 @@ function ImportView(props: {
                       settings={props.settings}
                       onDelete={() => props.deleteItem(item.id)}
                       onUpdate={(patch) => props.updateItem(item.id, patch)}
+                      onEdit={() => props.onEdit(item.id)}
+                      onAdd={() => props.addSingleItem(item)}
                     />
                   ))}
                 </div>
@@ -376,33 +367,15 @@ function ImportView(props: {
             ))}
           </div>
 
-          {/* Export card */}
-          <div className="mt-6 animate-scale-in overflow-hidden rounded-2xl bg-gradient-to-br from-[#007aff] to-[#5b5ef4] p-4 shadow-lg shadow-blue-500/20">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[16px] font-bold text-white">Export to Calendar</p>
-                <p className="mt-0.5 text-[13px] text-white/70">
-                  {props.eventCount} event{props.eventCount !== 1 ? "s" : ""} selected
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={props.handleExport}
-                className="rounded-xl bg-white/20 px-4 py-2 text-[14px] font-semibold text-white backdrop-blur-sm transition active:scale-95 active:bg-white/30"
-              >
-                Export
-              </button>
-            </div>
-            {props.successSummary && (
-              <button
-                type="button"
-                onClick={props.downloadIcs}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-[14px] font-semibold text-[#007aff] transition active:scale-[0.98] active:opacity-90"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4-4 4m0 0-4-4m4 4V4" /></svg>
-                Download {props.successSummary.eventCount} Events (.ics)
-              </button>
-            )}
+          {/* Delete all */}
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={props.deleteAll}
+              className="text-[13px] font-medium text-[#ef4444] dark:text-[#f87171]"
+            >
+              Clear all items
+            </button>
           </div>
         </>
       )}
@@ -480,43 +453,202 @@ function SettingsView({ settings, setSettings }: { settings: UserSettings; setSe
 }
 
 /* ── ItemRow ── */
-function ItemRow({ item, settings, onDelete, onUpdate }: {
+function ItemRow({ item, settings, onDelete, onUpdate, onEdit, onAdd }: {
   item: ScheduleItem;
   settings: UserSettings;
   onDelete: () => void;
   onUpdate: (patch: Partial<ScheduleItem>) => void;
+  onEdit: () => void;
+  onAdd: () => void;
 }) {
-  const summary = timeSummary(item, settings);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [menuOpen]);
+
+  const timeStr = timeSummary(item, settings);
+  const mapsUrl = item.address
+    ? `https://maps.apple.com/?q=${encodeURIComponent(item.address)}`
+    : null;
+
   return (
-    <div className={`card-row transition-opacity ${item.skipped ? "opacity-40" : ""}`}>
-      <button
-        type="button"
-        onClick={() => onUpdate({ skipped: !item.skipped })}
-        aria-label="Toggle selected"
-        className={`h-6 w-6 shrink-0 rounded-full border-2 transition-all duration-200 ${item.skipped ? "border-[#d1d5db] dark:border-[#374151]" : "border-[#007aff] bg-[#007aff] dark:border-[#3b82f6] dark:bg-[#3b82f6]"}`}
-      >
-        {!item.skipped && (
-          <svg className="mx-auto h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-        )}
-      </button>
+    <div className="card-row items-start py-3">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#007aff]/10 text-[11px] font-bold text-[#007aff] dark:bg-[#3b82f6]/15 dark:text-[#60a5fa]">
-            {item.emoji || "📅"}
-          </span>
-          <span className="truncate text-[15px] font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">{item.title}</span>
+        {/* Title */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[15px] leading-none">{item.emoji || "🗓️"}</span>
+          <span className="text-[15px] font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">{item.title}</span>
         </div>
-        <p className="mt-1 pl-9 text-[12px] text-[#5c6478] dark:text-[#8892a4]">{summary}</p>
-        {(item.duplicateAction === "skip" || item.edited) && (
-          <div className="mt-1.5 flex gap-1.5 pl-9">
-            {item.duplicateAction === "skip" && <MiniTag label="Duplicate" color="red" />}
-            {item.edited && <MiniTag label="Edited" color="gray" />}
-          </div>
+        {/* Time */}
+        <p className="mt-1 text-[13px] text-[#5c6478] dark:text-[#8892a4]">{timeStr}</p>
+        {/* Address (tappable) */}
+        {item.address && mapsUrl && (
+          <a
+            href={mapsUrl}
+            className="mt-0.5 block text-[12px] text-[#007aff] underline dark:text-[#60a5fa]"
+          >
+            {item.address}
+          </a>
+        )}
+        {/* Validation error */}
+        {item.validationError && (
+          <p className="mt-1 text-[12px] font-medium text-[#ef4444] dark:text-[#f87171]">
+            ⚠ {item.validationError}
+          </p>
+        )}
+        {/* Duplicate tag */}
+        {item.duplicateAction === "skip" && (
+          <span className="mt-1 inline-block rounded-full bg-[#fee2e2] px-2 py-0.5 text-[10px] font-semibold text-[#ef4444] dark:bg-[#2d0f0f] dark:text-[#f87171]">Duplicate</span>
         )}
       </div>
-      <button type="button" onClick={onDelete} className="shrink-0 rounded-lg px-2 py-1.5 text-[12px] font-semibold text-[#ef4444] transition active:opacity-70 dark:text-[#f87171]">
-        ✕
-      </button>
+
+      {/* Right side: Add + menu */}
+      <div className="ml-2 flex shrink-0 items-center gap-1.5">
+        {!item.validationError && (
+          <button
+            type="button"
+            onClick={onAdd}
+            className={`rounded-lg px-3 py-1.5 text-[13px] font-semibold transition active:scale-[0.97] ${
+              item.added
+                ? "bg-[#e9fbe9] text-[#16a34a] dark:bg-[#0a2e0a] dark:text-[#4ade80]"
+                : "bg-[#007aff] text-white shadow-sm dark:bg-[#3b82f6]"
+            }`}
+          >
+            {item.added ? "✓ Added" : "Add"}
+          </button>
+        )}
+
+        {/* ⋯ menu */}
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((p) => !p)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#5c6478] transition active:bg-black/5 dark:text-[#8892a4] dark:active:bg-white/5"
+            aria-label="More options"
+          >
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z" /></svg>
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-full z-30 mt-1 w-44 overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-black/8 dark:bg-[#1c1f2e] dark:ring-white/8">
+              <MenuButton label="Edit" onClick={() => { onEdit(); setMenuOpen(false); }} />
+              <MenuButton label="Mark Added" onClick={() => { onUpdate({ added: true }); setMenuOpen(false); }} />
+              <MenuButton label="Reset Added State" onClick={() => { onUpdate({ added: false }); setMenuOpen(false); }} />
+              <MenuButton label="Delete" danger onClick={() => { onDelete(); setMenuOpen(false); }} />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── EditModal ── */
+function EditModal({ item, onSave, onClose }: {
+  item: ScheduleItem;
+  onSave: (patch: Partial<ScheduleItem>) => void;
+  onClose: () => void;
+}) {
+  const [fields, setFields] = useState({
+    title: `${item.emoji} ${item.title}`.trim(),
+    date: item.date,
+    startTime: item.startTime ? formatTimeLabel(item.startTime, "12h") : "",
+    endTime: item.endTime ? formatTimeLabel(item.endTime, "12h") : "",
+    dueTime: item.dueTime ? formatTimeLabel(item.dueTime, "12h") : "",
+    address: item.address ?? "",
+    notes: item.notes,
+    calendar: item.calendar,
+    reminderList: item.reminderList,
+    reminderColumn: item.reminderColumn,
+  });
+
+  function save() {
+    const rawTitle = fields.title.trim();
+    onSave({
+      title: stripEmoji(rawTitle),
+      emoji: extractEmoji(rawTitle) || item.emoji,
+      date: fields.date,
+      startTime: fields.startTime.trim() ? normalizeTime(fields.startTime.trim()) : undefined,
+      endTime: fields.endTime.trim() ? normalizeTime(fields.endTime.trim()) : undefined,
+      dueTime: fields.dueTime.trim() ? normalizeTime(fields.dueTime.trim()) : undefined,
+      address: fields.address.trim() || undefined,
+      notes: fields.notes,
+      calendar: fields.calendar,
+      reminderList: fields.reminderList,
+      reminderColumn: fields.reminderColumn,
+    });
+    onClose();
+  }
+
+  const inputCls = "w-full bg-transparent text-right text-[15px] text-[#5c6478] outline-none dark:text-[#8892a4]";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-[430px] animate-scale-in rounded-t-3xl bg-[#f0f2f7] pb-8 shadow-2xl dark:bg-[#0f1117]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Handle bar */}
+        <div className="mx-auto mt-3 h-1 w-10 rounded-full bg-black/10 dark:bg-white/10" />
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4">
+          <h2 className="text-[17px] font-bold text-[#0a0e1a] dark:text-[#eef0f8]">Edit {item.type === "calendar" ? "Event" : "Task"}</h2>
+          <button type="button" onClick={save} className="text-[15px] font-semibold text-[#007aff] dark:text-[#60a5fa]">Done</button>
+        </div>
+        {/* Fields */}
+        <div className="px-4">
+          <div className="card-list">
+            <EditFieldRow label="Title">
+              <input value={fields.title} onChange={(e) => setFields((f) => ({ ...f, title: e.target.value }))} className={inputCls} />
+            </EditFieldRow>
+            <EditFieldRow label="Date">
+              <input type="date" value={fields.date} onChange={(e) => setFields((f) => ({ ...f, date: e.target.value }))} className={`${inputCls} max-w-[160px]`} />
+            </EditFieldRow>
+            {item.type === "calendar" && (
+              <>
+                <EditFieldRow label="Start">
+                  <input value={fields.startTime} onChange={(e) => setFields((f) => ({ ...f, startTime: e.target.value }))} placeholder="10:45 AM" className={inputCls} />
+                </EditFieldRow>
+                <EditFieldRow label="End">
+                  <input value={fields.endTime} onChange={(e) => setFields((f) => ({ ...f, endTime: e.target.value }))} placeholder="12:45 PM" className={inputCls} />
+                </EditFieldRow>
+              </>
+            )}
+            {item.type === "reminder" && (
+              <>
+                <EditFieldRow label="Due">
+                  <input value={fields.dueTime} onChange={(e) => setFields((f) => ({ ...f, dueTime: e.target.value }))} placeholder="1:00 PM" className={inputCls} />
+                </EditFieldRow>
+                <EditFieldRow label="List">
+                  <input value={fields.reminderList} onChange={(e) => setFields((f) => ({ ...f, reminderList: e.target.value }))} className={inputCls} />
+                </EditFieldRow>
+                <EditFieldRow label="Column">
+                  <input value={fields.reminderColumn} onChange={(e) => setFields((f) => ({ ...f, reminderColumn: e.target.value }))} className={inputCls} />
+                </EditFieldRow>
+              </>
+            )}
+            <EditFieldRow label="Address">
+              <input value={fields.address} onChange={(e) => setFields((f) => ({ ...f, address: e.target.value }))} placeholder="Street address, city, state" className={inputCls} />
+            </EditFieldRow>
+            <EditFieldRow label="Notes">
+              <input value={fields.notes} onChange={(e) => setFields((f) => ({ ...f, notes: e.target.value }))} placeholder="Optional" className={inputCls} />
+            </EditFieldRow>
+            {item.type === "calendar" && (
+              <EditFieldRow label="Calendar">
+                <input value={fields.calendar} onChange={(e) => setFields((f) => ({ ...f, calendar: e.target.value }))} className={inputCls} />
+              </EditFieldRow>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -583,31 +715,8 @@ function ActionButton({ label, onClick, tone }: { label: string; onClick: () => 
   );
 }
 
-function PillButton({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold transition-all active:scale-[0.97] ${
-        danger
-          ? "bg-[#fee2e2] text-[#ef4444] dark:bg-[#2d0f0f] dark:text-[#f87171]"
-          : "bg-white text-[#007aff] shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:text-[#60a5fa] dark:ring-white/6"
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
 function SectionLabel({ label }: { label: string }) {
   return <p className="px-1 text-[12px] font-semibold uppercase tracking-widest text-[#9ca3af] dark:text-[#4b5563]">{label}</p>;
-}
-
-function MiniTag({ label, color }: { label: string; color: "red" | "gray" }) {
-  const cls = color === "red"
-    ? "bg-[#fee2e2] text-[#ef4444] dark:bg-[#2d0f0f] dark:text-[#f87171]"
-    : "bg-[#f3f4f6] text-[#6b7280] dark:bg-[#1f2937] dark:text-[#9ca3af]";
-  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
 }
 
 function EmptyState({ icon, title, text }: { icon?: string; title: string; text: string }) {
@@ -666,17 +775,44 @@ function ButtonSetting({ label, onClick, destructive }: { label: string; onClick
   );
 }
 
+function EditFieldRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="card-row gap-3">
+      <span className="w-16 shrink-0 text-[15px] text-[#0a0e1a] dark:text-[#eef0f8]">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function MenuButton({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`block w-full px-4 py-3 text-left text-[14px] font-medium transition-colors active:bg-black/5 dark:active:bg-white/5 ${
+        danger ? "text-[#ef4444] dark:text-[#f87171]" : "text-[#0a0e1a] dark:text-[#eef0f8]"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 /* ── Helpers ── */
 function timeSummary(item: ScheduleItem, settings: UserSettings): string {
   if (item.type === "calendar") {
     const start = item.startTime ? formatTimeLabel(item.startTime, settings.timeFormat) : "All day";
     const end = item.endTime ? ` – ${formatTimeLabel(item.endTime, settings.timeFormat)}` : "";
-    return `${formatDisplayDate(item.date)} · ${start}${end}`;
+    return `${start}${end}`;
   }
-  const due = item.dueTime ? formatTimeLabel(item.dueTime, settings.timeFormat) : "No time";
-  return `${formatDisplayDate(item.date)} · Due ${due}`;
+  const due = item.dueTime ? `Due ${formatTimeLabel(item.dueTime, settings.timeFormat)}` : "No due time";
+  return due;
 }
 
 function extractEmoji(title: string): string {
   return title.match(/([\p{Emoji_Presentation}\p{Extended_Pictographic}])/gu)?.[0] ?? "";
+}
+
+function stripEmoji(title: string): string {
+  return title.replace(/([\p{Emoji_Presentation}\p{Extended_Pictographic}])/gu, "").trim();
 }

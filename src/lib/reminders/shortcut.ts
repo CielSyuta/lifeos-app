@@ -11,7 +11,7 @@ export function buildShortcutPayload(items: ScheduleItem[]): ShortcutPayload {
         list: item.reminderList,
         column: item.reminderColumn,
         priority: item.priority,
-        notes: item.notes,
+        notes: [item.notes, item.address ? `Address: ${item.address}` : ""].filter(Boolean).join("\n") || undefined,
       })),
   };
 }
