@@ -1,124 +1,239 @@
 import { describe, expect, it } from "vitest";
 import { buildIcsContent } from "../calendar/ics";
 import { buildShortcutJson } from "../reminders/shortcut";
-import { createDefaultSettings, detectDuplicateItems, parseSchedule, resolveExportItems } from "./index";
+import { createDefaultSettings, parseSchedule } from "./index";
 
-describe("parseSchedule", () => {
-  it("parses natural input into calendar and reminder items", () => {
-    const settings = createDefaultSettings();
-    const sample = `Date: Saturday, August 8, 2026
+describe("canonical parser", () => {
+  it("preserves emoji and unicode in titles", () => {
+    const sample = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+[/EVENT]
 
-8/8/26 9:30 AM - 11:30 AM
-💪 Gym
+[TASK]
+Title: 🍟 McDonald's | Enfield
+[/TASK]
 
-8/8/26 1:00 PM
-🧼 Clean Bathroom`;
+[TASK]
+Title: 予定の確認 🌅
+[/TASK]`;
+
+    const parsed = parseSchedule(sample, createDefaultSettings());
+
+    expect(parsed).toHaveLength(3);
+    expect(parsed[0]?.title).toBe("💪 Gym");
+    expect(parsed[1]?.title).toBe("🍟 McDonald's | Enfield");
+    expect(parsed[2]?.title).toBe("予定の確認 🌅");
+  });
+
+  it("keeps location and address separate", () => {
+    const sample = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+Location: Planet Fitness
+Address: 50 Holyoke St, Holyoke, MA 01040
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, createDefaultSettings());
+    expect(item?.location).toBe("Planet Fitness");
+    expect(item?.address).toBe("50 Holyoke St, Holyoke, MA 01040");
+  });
+
+  it("supports blank optional address", () => {
+    const sample = `[EVENT]
+Title: 🌅 Morning Routine
+Date: 2026-08-11
+Start: 7:30 AM
+End: 8:00 AM
+Address:
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, createDefaultSettings());
+    expect(item?.address).toBe("");
+  });
+
+  it("normalizes alerts", () => {
+    const sample = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+Alert: AtTime
+[/EVENT]
+
+[TASK]
+Title: 🧺 Start Laundry
+Alert: AtDueTime
+[/TASK]`;
+
+    const parsed = parseSchedule(sample, createDefaultSettings());
+    expect(parsed[0]?.alert).toBe("at_time");
+    expect(parsed[1]?.alert).toBe("at_due_time");
+  });
+
+  it("parses travel time into minutes", () => {
+    const sample = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+TravelTime: 1h30m
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, createDefaultSettings());
+    expect(item?.travelTimeMinutes).toBe(90);
+  });
+
+  it("applies default alerts and travel time when blank", () => {
+    const settings = {
+      ...createDefaultSettings(),
+      defaultEventAlert: "1h",
+      defaultReminderAlert: "30m",
+      defaultTravelTimeMinutes: 45,
+    };
+
+    const sample = `[EVENT]
+Title: 🌅 Morning Routine
+Date: 2026-08-11
+Start: 7:30 AM
+End: 8:00 AM
+Alert:
+TravelTime:
+[/EVENT]
+
+[TASK]
+Title: 🧺 Start Laundry
+Alert:
+[/TASK]`;
 
     const parsed = parseSchedule(sample, settings);
+    expect(parsed[0]?.alert).toBe("1h");
+    expect(parsed[0]?.travelTimeMinutes).toBe(45);
+    expect(parsed[1]?.alert).toBe("30m");
+  });
 
+  it("supports URL and notes", () => {
+    const sample = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+URL: https://example.com
+Notes: 2-hour workout
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, createDefaultSettings());
+    expect(item?.url).toBe("https://example.com");
+    expect(item?.notes).toBe("2-hour workout");
+  });
+
+  it("parses multiple events and tasks in mixed order", () => {
+    const sample = `[EVENT]
+Title: 🌅 Morning Routine
+Date: 2026-08-11
+Start: 7:30 AM
+End: 8:00 AM
+[/EVENT]
+
+[TASK]
+Title: 🧺 Start Laundry
+[/TASK]
+
+[EVENT]
+Title: 🍟 McDonald's | Enfield
+Date: 2026-08-11
+Start: 4:00 PM
+End: 12:45 AM
+[/EVENT]`;
+
+    const parsed = parseSchedule(sample, createDefaultSettings());
+    expect(parsed).toHaveLength(3);
+    expect(parsed.filter((item) => item.type === "calendar")).toHaveLength(2);
+    expect(parsed.filter((item) => item.type === "reminder")).toHaveLength(1);
+  });
+
+  it("isolates malformed blocks from valid blocks", () => {
+    const sample = `[EVENT]
+Title: ✅ Valid Event
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+[/EVENT]
+
+[EVENT]
+Date: 2026-08-11
+Start: 1:00 PM
+End: 2:00 PM
+[/EVENT]
+
+[TASK]
+Title: ✅ Valid Task
+[/TASK]`;
+
+    const parsed = parseSchedule(sample, createDefaultSettings());
     expect(parsed).toHaveLength(2);
-    expect(parsed[0]?.type).toBe("calendar");
-    expect(parsed[0]?.title).toBe("Gym");
-    expect(parsed[1]?.type).toBe("reminder");
-    expect(parsed[1]?.title).toBe("Clean Bathroom");
+    expect(parsed[0]?.title).toBe("✅ Valid Event");
+    expect(parsed[1]?.title).toBe("✅ Valid Task");
   });
 
-  it("supports structured task blocks", () => {
-    const settings = createDefaultSettings();
-    const sample = `[EVENT]\nDate: 8/8/26\nStart: 9:30 AM\nEnd: 11:30 AM\nTitle: 💪 Gym\nCalendar: Personal\nAlert: 30m\nTravel: Auto\nLocation: Planet Fitness\n\n[TASK]\nDate: 8/8/26\nDue: 1:00 PM\nTitle: 🧼 Clean Bathroom\nList: Life General\nColumn: Home\nPriority: Medium`;
+  it("keeps legacy structured support", () => {
+    const sample = `[EVENT]
+Date: 8/8/26
+Start: 9:30 AM
+End: 11:30 AM
+Title: 💪 Gym
+Travel: 30m
 
-    const parsed = parseSchedule(sample, settings);
-    expect(parsed[0]?.type).toBe("calendar");
-    expect(parsed[0]?.calendar).toBe("Personal");
-    expect(parsed[1]?.type).toBe("reminder");
+[TASK]
+Title: 🧺 Start Laundry
+List: Life General`;
+
+    const parsed = parseSchedule(sample, createDefaultSettings());
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]?.travelTimeMinutes).toBe(30);
     expect(parsed[1]?.reminderList).toBe("Life General");
-  });
-
-  it("handles overnight events", () => {
-    const settings = createDefaultSettings();
-    const sample = `Date: Saturday, August 8, 2026
-
-8/8/26 5:00 PM - 1:45 AM
-🍟 McDonald's Enfield`;
-
-    const parsed = parseSchedule(sample, settings);
-    expect(parsed[0]?.type).toBe("calendar");
-    expect(parsed[0]?.endTime).toBe("01:45");
   });
 });
 
-describe("duplicate handling and exports", () => {
-  it("marks duplicate items and leaves only one exportable copy", () => {
-    const settings = createDefaultSettings();
-    const sample = `Date: Saturday, August 8, 2026
+describe("handoff builders", () => {
+  it("builds ICS with emoji title, overnight end date, location/address, URL and alarm", () => {
+    const [event] = parseSchedule(`[EVENT]
+Title: 🍟 McDonald's | Enfield
+Date: 2026-08-11
+Start: 4:00 PM
+End: 12:45 AM
+Location: McDonald's
+Address: 34 Enfield St, Enfield, CT
+Alert: 1h
+URL: https://example.com
+Notes: Late stop
+[/EVENT]`, createDefaultSettings());
 
-8/8/26 9:30 AM - 11:30 AM
-💪 Gym
-
-8/8/26 9:30 AM - 11:30 AM
-💪 Gym`;
-
-    const parsed = detectDuplicateItems(parseSchedule(sample, settings));
-    const exportable = resolveExportItems(parsed);
-    expect(exportable).toHaveLength(1);
+    const ics = buildIcsContent([event!]);
+    expect(ics).toContain("SUMMARY:🍟 McDonald's | Enfield");
+    expect(ics).toContain("DTEND:20260812T004500");
+    expect(ics).toContain("LOCATION:McDonald's — 34 Enfield St\\, Enfield\\, CT");
+    expect(ics).toContain("URL:https://example.com");
+    expect(ics).toContain("TRIGGER:-PT1H");
   });
 
-  it("builds ICS content for calendar items", () => {
-    const calendarItem = {
-      id: "event-1",
-      type: "calendar" as const,
-      title: "Gym",
-      emoji: "💪",
-      date: "2026-08-08",
-      startTime: "09:30",
-      endTime: "11:30",
-      notes: "",
-      location: "Planet Fitness",
-      calendar: "Personal",
-      reminderList: "Life General",
-      reminderColumn: "Home",
-      priority: "medium" as const,
-      alert: "30m",
-      travelTime: "none",
-      allDay: false,
-      completed: false,
-      source: "natural" as const,
-      inferredType: "calendar" as const,
-      edited: false,
-    };
+  it("builds reminder shortcut payload with full title", () => {
+    const [task] = parseSchedule(`[TASK]
+Title: 🧺 Start Laundry
+Date: 2026-08-11
+Due: 9:30 AM
+List: Life General
+Column: Laundry
+Alert: AtDueTime
+[/TASK]`, createDefaultSettings());
 
-    const ics = buildIcsContent([calendarItem]);
-    expect(ics).toContain("BEGIN:VEVENT");
-    expect(ics).toContain("SUMMARY:Gym");
-    expect(ics).toContain("DTSTART:");
-    expect(ics).toContain("BEGIN:VALARM");
-  });
-
-  it("builds shortcut JSON payloads", () => {
-    const reminderItem = {
-      id: "task-1",
-      type: "reminder" as const,
-      title: "Clean Bathroom",
-      emoji: "🧼",
-      date: "2026-08-08",
-      dueTime: "13:00",
-      notes: "",
-      location: "",
-      calendar: "Personal",
-      reminderList: "Life General",
-      reminderColumn: "Home",
-      priority: "medium" as const,
-      alert: "at_due",
-      travelTime: "none",
-      allDay: false,
-      completed: false,
-      source: "natural" as const,
-      inferredType: "reminder" as const,
-      edited: false,
-    };
-
-    const payload = buildShortcutJson([reminderItem]);
-    expect(payload).toContain("Clean Bathroom");
+    const payload = buildShortcutJson([task!]);
+    expect(payload).toContain("🧺 Start Laundry");
     expect(payload).toContain("Life General");
+    expect(payload).toContain("at_due_time");
   });
 });

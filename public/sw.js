@@ -1,4 +1,4 @@
-const CACHE_NAME = "lifeos-shell-v1";
+const CACHE_NAME = "schedule-parser-shell-v1";
 const APP_SHELL = ["/", "/icon.svg", "/apple-touch-icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

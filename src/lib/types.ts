@@ -1,5 +1,4 @@
 export type ScheduleItemType = "calendar" | "reminder";
-export type TravelMode = "none" | "manual" | "automatic";
 export type Priority = "low" | "medium" | "high";
 export type TimeFormat = "12h" | "24h";
 export type ThemeMode = "dark" | "light" | "system";
@@ -15,15 +14,19 @@ export interface ScheduleItem {
   dueTime?: string;
   notes: string;
   location: string;
+  address: string;
   calendar: string;
   reminderList: string;
   reminderColumn: string;
   priority: Priority;
   alert: string;
-  travelTime: TravelMode | string;
+  travelTimeMinutes: number | null;
+  repeat: string;
+  url: string;
+  invitees: string;
   allDay: boolean;
   completed: boolean;
-  source: "natural" | "structured";
+  source: "natural" | "legacy" | "canonical";
   inferredType: ScheduleItemType;
   duplicateAction?: "keep" | "skip" | "replace";
   edited: boolean;
@@ -41,11 +44,12 @@ export interface LearnedRule {
 
 export interface UserSettings {
   defaultCalendar: string;
+  defaultEventAlert: string;
   defaultReminderList: string;
   defaultReminderColumn: string;
-  defaultCalendarAlert: string;
   defaultReminderAlert: string;
-  defaultTravelTime: TravelMode | string;
+  defaultTravelTimeMinutes: number | null;
+  defaultRepeat: string;
   timeFormat: TimeFormat;
   theme: ThemeMode;
   darkMode: boolean;
@@ -75,6 +79,9 @@ export interface ShortcutReminderTask {
   list: string;
   column?: string;
   priority?: string;
+  alert?: string;
+  repeat?: string;
+  url?: string;
   notes?: string;
 }
 

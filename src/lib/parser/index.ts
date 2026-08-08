@@ -20,11 +20,12 @@ const REMINDER_KEYWORDS = /clean|laundry|pay|buy|call|remember|pack|review|charg
 
 const DEFAULTS: UserSettings = {
   defaultCalendar: "Personal",
+  defaultEventAlert: "30m",
   defaultReminderList: "Life General",
   defaultReminderColumn: "Home",
-  defaultCalendarAlert: "30m",
-  defaultReminderAlert: "at_due",
-  defaultTravelTime: "none",
+  defaultReminderAlert: "at_due_time",
+  defaultTravelTimeMinutes: null,
+  defaultRepeat: "Never",
   timeFormat: "12h",
   theme: "dark",
   darkMode: true,
@@ -35,6 +36,9 @@ const DEFAULTS: UserSettings = {
   defaultLocationBehavior: "ask",
   learnedRules: [],
 };
+
+const CALENDAR_ALERTS = new Set(["none", "at_time", "5m", "10m", "15m", "30m", "1h", "2h", "1d"]);
+const REMINDER_ALERTS = new Set(["none", "at_due_time", "5m", "10m", "15m", "30m", "1h", "2h", "1d"]);
 
 export function createDefaultSettings(): UserSettings {
   return {
@@ -49,85 +53,158 @@ export function parseSchedule(input: string, settings: UserSettings = createDefa
     return [];
   }
 
-  if (trimmed.includes("[EVENT]") || trimmed.includes("[TASK]")) {
-    return parseStructuredSchedule(trimmed, settings);
-  }
+  const canonicalResult = parseCanonicalBlocks(trimmed, settings);
+  const legacyResult = parseLegacyStructuredSchedule(canonicalResult.remainder, settings);
+  const naturalItems = parseNaturalSchedule(legacyResult.remainder, settings);
 
-  return parseNaturalSchedule(trimmed, settings);
+  return [...canonicalResult.items, ...legacyResult.items, ...naturalItems];
 }
 
-function parseStructuredSchedule(input: string, settings: UserSettings): ScheduleItem[] {
-  const lines = input.split(/\r?\n/);
-  const blocks: string[][] = [];
-  let current: string[] = [];
+function parseCanonicalBlocks(input: string, settings: UserSettings): { items: ScheduleItem[]; remainder: string } {
+  const items: ScheduleItem[] = [];
+  const pattern = /\[(EVENT|TASK)\]([\s\S]*?)\[\/\1\]/gi;
+  const remainder = input.replace(pattern, (_full, kind: string, body: string) => {
+    const parsed = parseStructuredItem(kind.toLowerCase() === "event" ? "calendar" : "reminder", parseStructuredValues(body), settings, "canonical");
+    if (parsed) {
+      items.push(parsed);
+    }
+    return "\n";
+  });
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^\[(EVENT|TASK)\]$/i.test(trimmed)) {
-      if (current.length) {
-        blocks.push(current);
-      }
-      current = [trimmed];
+  return { items, remainder };
+}
+
+function parseLegacyStructuredSchedule(input: string, settings: UserSettings): { items: ScheduleItem[]; remainder: string } {
+  const items: ScheduleItem[] = [];
+  const lines = input.split(/\r?\n/);
+  const consumed = new Set<number>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const marker = lines[index]?.trim().match(/^\[(EVENT|TASK)\]$/i);
+    if (!marker) {
       continue;
     }
 
-    if (current.length) {
-      current.push(line);
+    const kind = marker[1]?.toLowerCase() === "event" ? "calendar" : "reminder";
+    consumed.add(index);
+
+    const blockLines: string[] = [];
+    let cursor = index + 1;
+    while (cursor < lines.length) {
+      const candidate = lines[cursor]?.trim() ?? "";
+      if (/^\[(EVENT|TASK)\]$/i.test(candidate)) {
+        break;
+      }
+      if (/^\[\/(EVENT|TASK)\]$/i.test(candidate)) {
+        consumed.add(cursor);
+        cursor += 1;
+        break;
+      }
+      consumed.add(cursor);
+      blockLines.push(lines[cursor] ?? "");
+      cursor += 1;
+    }
+
+    const parsed = parseStructuredItem(kind, parseStructuredValues(blockLines.join("\n")), settings, "legacy");
+    if (parsed) {
+      items.push(parsed);
     }
   }
 
-  if (current.length) {
-    blocks.push(current);
-  }
+  const remainder = lines
+    .filter((line, index) => !consumed.has(index) && !/^\s*\[\/(EVENT|TASK)\]\s*$/i.test(line))
+    .join("\n");
 
-  return blocks
-    .map((block) => parseStructuredBlock(block, settings))
-    .filter((item): item is ScheduleItem => Boolean(item));
+  return { items, remainder };
 }
 
-function parseStructuredBlock(block: string[], settings: UserSettings): ScheduleItem | null {
-  const type = block[0].toLowerCase().includes("event") ? "calendar" : "reminder";
+function parseStructuredValues(body: string): Record<string, string> {
   const values: Record<string, string> = {};
-
-  for (const line of block.slice(1)) {
-    const match = line.match(/^([A-Za-z]+):\s*(.+)$/);
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    const match = line.match(/^([A-Za-z]+):\s*(.*)$/);
     if (match) {
       values[match[1].toLowerCase()] = match[2].trim();
     }
   }
+  return values;
+}
 
-  const title = values.title || "Untitled";
-  const date = values.date ? formatDateString(values.date) : "";
-  let itemType: ScheduleItem["type"] = type;
-  if (settings.autoDetectType) {
-    itemType = inferItemType(title, values.start, values.end, values.due);
+function parseStructuredItem(
+  type: ScheduleItem["type"],
+  values: Record<string, string>,
+  settings: UserSettings,
+  source: ScheduleItem["source"]
+): ScheduleItem | null {
+  const title = values.title?.trim() ?? "";
+  if (!title) {
+    return null;
   }
 
-  const item: ScheduleItem = {
+  if (type === "calendar") {
+    const date = values.date ? formatDateString(values.date) : "";
+    const startTime = values.start ? normalizeTime(values.start) : undefined;
+    const endTime = values.end ? normalizeTime(values.end) : undefined;
+    if (!date || !startTime || !endTime) {
+      return null;
+    }
+
+    return applyLearningRules({
+      id: crypto.randomUUID(),
+      type,
+      title,
+      emoji: extractEmoji(title),
+      date,
+      startTime,
+      endTime,
+      notes: values.notes || "",
+      location: values.location || "",
+      address: values.address || "",
+      calendar: values.calendar || settings.defaultCalendar,
+      reminderList: settings.defaultReminderList,
+      reminderColumn: settings.defaultReminderColumn,
+      priority: "medium",
+      alert: normalizeAlert(values.alert, type, settings),
+      travelTimeMinutes: parseTravelTimeValue(values.traveltime ?? values.travel, settings.defaultTravelTimeMinutes),
+      repeat: normalizeRepeat(values.repeat, settings.defaultRepeat),
+      url: values.url || "",
+      invitees: values.invitees || "",
+      allDay: false,
+      completed: false,
+      source,
+      inferredType: type,
+      edited: false,
+    }, settings);
+  }
+
+  return applyLearningRules({
     id: crypto.randomUUID(),
-    type: itemType,
-    title: stripEmoji(title),
+    type,
+    title,
     emoji: extractEmoji(title),
-    date,
-    startTime: values.start ? normalizeTime(values.start) : undefined,
-    endTime: values.end ? normalizeTime(values.end) : undefined,
+    date: values.date ? formatDateString(values.date) : "",
     dueTime: values.due ? normalizeTime(values.due) : undefined,
     notes: values.notes || "",
     location: values.location || "",
+    address: values.address || "",
     calendar: values.calendar || settings.defaultCalendar,
     reminderList: values.list || settings.defaultReminderList,
     reminderColumn: values.column || settings.defaultReminderColumn,
     priority: normalizePriority(values.priority),
-    alert: normalizeAlert(values.alert, itemType, settings),
-    travelTime: values.travel || settings.defaultTravelTime,
+    alert: normalizeAlert(values.alert, type, settings),
+    travelTimeMinutes: parseTravelTimeValue(values.traveltime ?? values.travel, settings.defaultTravelTimeMinutes),
+    repeat: normalizeRepeat(values.repeat, settings.defaultRepeat),
+    url: values.url || "",
+    invitees: values.invitees || "",
     allDay: false,
     completed: false,
-    source: "structured",
-    inferredType: itemType,
+    source,
+    inferredType: type,
     edited: false,
-  };
-
-  return applyLearningRules(item, settings);
+  }, settings);
 }
 
 function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleItem[] {
@@ -137,7 +214,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index].trim();
-    if (!line) {
+    if (!line || /^\[\/?(EVENT|TASK)\]$/i.test(line)) {
       continue;
     }
 
@@ -156,7 +233,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
     const startTime = timeMatch[2] ? normalizeTime(timeMatch[2]) : undefined;
     const endTime = timeMatch[3] ? normalizeTime(timeMatch[3]) : undefined;
 
-    let title = "Untitled";
+    let title = "";
     const notes: string[] = [];
     let cursor = index + 1;
     while (cursor < lines.length) {
@@ -166,7 +243,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
         continue;
       }
 
-      if (/^Date:\s*/i.test(candidate)) {
+      if (/^Date:\s*/i.test(candidate) || /^\[\/?(EVENT|TASK)\]$/i.test(candidate)) {
         break;
       }
 
@@ -175,7 +252,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
         break;
       }
 
-      if (title === "Untitled") {
+      if (!title) {
         title = candidate;
       } else if (/^[•\-\*]\s*/.test(candidate)) {
         notes.push(candidate.replace(/^[•\-\*]\s*/, ""));
@@ -186,11 +263,20 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
     }
 
     index = cursor - 1;
-    const itemType: ScheduleItem["type"] = settings.autoDetectType ? inferItemType(title, startTime, endTime) : endTime ? "calendar" : "reminder";
+    if (!title) {
+      continue;
+    }
+
+    const itemType: ScheduleItem["type"] = settings.autoDetectType
+      ? inferItemType(title, startTime, endTime)
+      : endTime
+        ? "calendar"
+        : "reminder";
+
     const item: ScheduleItem = {
       id: crypto.randomUUID(),
       type: itemType,
-      title: stripEmoji(title),
+      title,
       emoji: extractEmoji(title),
       date: extractedDate,
       startTime,
@@ -198,12 +284,16 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
       dueTime: itemType === "reminder" && startTime ? startTime : undefined,
       notes: notes.join("\n"),
       location: "",
+      address: "",
       calendar: settings.defaultCalendar,
       reminderList: settings.defaultReminderList,
       reminderColumn: settings.defaultReminderColumn,
       priority: "medium",
-      alert: itemType === "calendar" ? settings.defaultCalendarAlert : settings.defaultReminderAlert,
-      travelTime: settings.defaultTravelTime,
+      alert: normalizeAlert(undefined, itemType, settings),
+      travelTimeMinutes: settings.defaultTravelTimeMinutes,
+      repeat: settings.defaultRepeat,
+      url: "",
+      invitees: "",
       allDay: false,
       completed: false,
       source: "natural",
@@ -316,12 +406,9 @@ export function learnItemRule(item: ScheduleItem, settings: UserSettings): UserS
   return nextSettings;
 }
 
-function inferItemType(title: string, start?: string, end?: string, due?: string): ScheduleItem["type"] {
+function inferItemType(title: string, start?: string, end?: string): ScheduleItem["type"] {
   if (start && end) {
     return "calendar";
-  }
-  if (due) {
-    return "reminder";
   }
   const normalized = title.toLowerCase();
   if (CALENDAR_KEYWORDS.test(normalized)) {
@@ -351,11 +438,64 @@ function normalizePriority(value?: string): Priority {
   return "medium";
 }
 
-function normalizeAlert(value: string | undefined, type: ScheduleItem["type"], settings: UserSettings): string {
-  if (value) {
-    return value;
+export function normalizeRepeat(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+export function normalizeAlert(value: string | undefined, type: ScheduleItem["type"], settings: UserSettings): string {
+  const raw = value?.trim();
+  const normalizedDefault = normalizeAlertValue(
+    type === "calendar" ? settings.defaultEventAlert : settings.defaultReminderAlert,
+    type,
+    type === "calendar" ? "30m" : "at_due_time"
+  );
+
+  if (!raw) {
+    return normalizedDefault;
   }
-  return type === "calendar" ? settings.defaultCalendarAlert : settings.defaultReminderAlert;
+
+  return normalizeAlertValue(raw, type, normalizedDefault);
+}
+
+function normalizeAlertValue(value: string, type: ScheduleItem["type"], fallback: string): string {
+  const compact = value.toLowerCase().replace(/\s+/g, "");
+
+  let normalized = compact;
+  if (compact === "attime") normalized = "at_time";
+  if (compact === "atduetime" || compact === "at_due" || compact === "atdue") normalized = "at_due_time";
+  if (compact === "none") normalized = "none";
+
+  const allowed = type === "calendar" ? CALENDAR_ALERTS : REMINDER_ALERTS;
+  if (allowed.has(normalized)) {
+    return normalized;
+  }
+
+  return fallback;
+}
+
+export function parseTravelTimeValue(value: string | undefined, fallback: number | null): number | null {
+  const raw = value?.trim().toLowerCase();
+  if (!raw) {
+    return fallback;
+  }
+  if (raw === "none") {
+    return null;
+  }
+
+  const hourMinute = raw.match(/^(\d+)h(?:(\d+)m)?$/);
+  if (hourMinute) {
+    const hours = Number(hourMinute[1]);
+    const minutes = Number(hourMinute[2] || "0");
+    return hours * 60 + minutes;
+  }
+
+  const minutesOnly = raw.match(/^(\d+)m$/);
+  if (minutesOnly) {
+    return Number(minutesOnly[1]);
+  }
+
+  return fallback;
 }
 
 function normalizeTime(value: string): string {
@@ -380,10 +520,6 @@ function normalizeTime(value: string): string {
 function extractEmoji(text: string): string {
   const match = text.match(/([\p{Emoji_Presentation}\p{Extended_Pictographic}])/gu);
   return match?.[0] || "🗓️";
-}
-
-function stripEmoji(text: string): string {
-  return text.replace(/([\p{Emoji_Presentation}\p{Extended_Pictographic}])/gu, "").trim();
 }
 
 function formatDateString(value: string): string {
@@ -438,6 +574,9 @@ export function formatDisplayDate(date: string): string {
   }
   const [year, month, day] = date.split("-").map(Number);
   const parsed = new Date(year, month - 1, day);
+  if (Number.isNaN(parsed.getTime())) {
+    return date;
+  }
   return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 

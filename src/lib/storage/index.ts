@@ -1,29 +1,46 @@
-import { createDefaultSettings } from "../parser";
+import { createDefaultSettings, parseTravelTimeValue } from "../parser";
 import { type ImportSession, type UserSettings } from "../types";
 
-const SETTINGS_KEY = "lifeos-settings";
-const HISTORY_KEY = "lifeos-history";
-const ACTIVE_IMPORT_KEY = "lifeos-active-import";
+const SETTINGS_KEY = "schedule-parser-settings";
+const LEGACY_SETTINGS_KEY = "lifeos-settings";
+const HISTORY_KEY = "schedule-parser-history";
+const LEGACY_HISTORY_KEY = "lifeos-history";
+const ACTIVE_IMPORT_KEY = "schedule-parser-active-import";
+const LEGACY_ACTIVE_IMPORT_KEY = "lifeos-active-import";
 
 export function loadSettings(): UserSettings {
   if (typeof window === "undefined") {
     return createDefaultSettings();
   }
 
-  const raw = window.localStorage.getItem(SETTINGS_KEY);
+  const raw = window.localStorage.getItem(SETTINGS_KEY) ?? window.localStorage.getItem(LEGACY_SETTINGS_KEY);
   if (!raw) {
     return createDefaultSettings();
   }
 
   try {
+    const parsed = JSON.parse(raw) as Partial<UserSettings> & {
+      defaultCalendarAlert?: string;
+      defaultTravelTime?: string;
+    };
+
     return {
       ...createDefaultSettings(),
-      ...JSON.parse(raw),
-      learnedRules: Array.isArray(JSON.parse(raw).learnedRules) ? JSON.parse(raw).learnedRules : [],
+      ...parsed,
+      defaultEventAlert: parsed.defaultEventAlert ?? parsed.defaultCalendarAlert ?? createDefaultSettings().defaultEventAlert,
+      defaultTravelTimeMinutes: parsed.defaultTravelTimeMinutes ?? parseLegacyTravelTime(parsed.defaultTravelTime),
+      learnedRules: Array.isArray(parsed.learnedRules) ? parsed.learnedRules : [],
     };
   } catch {
     return createDefaultSettings();
   }
+}
+
+function parseLegacyTravelTime(value?: string): number | null {
+  const normalized = value?.toLowerCase();
+  if (!normalized || normalized === "none") return null;
+  if (normalized === "manual" || normalized === "automatic") return null;
+  return parseTravelTimeValue(normalized, null);
 }
 
 export function saveSettings(settings: UserSettings): void {
@@ -38,7 +55,7 @@ export function loadHistory(): ImportSession[] {
     return [];
   }
 
-  const raw = window.localStorage.getItem(HISTORY_KEY);
+  const raw = window.localStorage.getItem(HISTORY_KEY) ?? window.localStorage.getItem(LEGACY_HISTORY_KEY);
   if (!raw) {
     return [];
   }
@@ -63,7 +80,7 @@ export function loadActiveImport(): ImportSession | null {
     return null;
   }
 
-  const raw = window.localStorage.getItem(ACTIVE_IMPORT_KEY);
+  const raw = window.localStorage.getItem(ACTIVE_IMPORT_KEY) ?? window.localStorage.getItem(LEGACY_ACTIVE_IMPORT_KEY);
   if (!raw) {
     return null;
   }
@@ -95,4 +112,7 @@ export function clearAllData(): void {
   window.localStorage.removeItem(SETTINGS_KEY);
   window.localStorage.removeItem(HISTORY_KEY);
   window.localStorage.removeItem(ACTIVE_IMPORT_KEY);
+  window.localStorage.removeItem(LEGACY_SETTINGS_KEY);
+  window.localStorage.removeItem(LEGACY_HISTORY_KEY);
+  window.localStorage.removeItem(LEGACY_ACTIVE_IMPORT_KEY);
 }
