@@ -36,7 +36,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#05070b",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f0f2f7" },
+    { media: "(prefers-color-scheme: dark)", color: "#05070b" },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -45,7 +48,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full bg-[#05070b] text-slate-100">
+      <body className="min-h-full">
         {children}
         <PwaRegister />
       </body>
