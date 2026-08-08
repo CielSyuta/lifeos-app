@@ -14,6 +14,7 @@ export interface ScheduleItem {
   endTime?: string;
   dueTime?: string;
   notes: string;
+  address?: string;
   location: string;
   calendar: string;
   reminderList: string;
@@ -28,6 +29,8 @@ export interface ScheduleItem {
   duplicateAction?: "keep" | "skip" | "replace";
   edited: boolean;
   skipped?: boolean;
+  added?: boolean;
+  validationError?: string;
 }
 
 export interface LearnedRule {

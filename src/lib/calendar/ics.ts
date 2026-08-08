@@ -31,8 +31,8 @@ export function buildIcsContent(items: ScheduleItem[]): string {
     if (item.notes) {
       lines.push(`DESCRIPTION:${escapeText(item.notes)}`);
     }
-    if (item.location) {
-      lines.push(`LOCATION:${escapeText(item.location)}`);
+    if (item.address || item.location) {
+      lines.push(`LOCATION:${escapeText(item.address || item.location)}`);
     }
     if (item.alert) {
       const trigger = formatAlarmTrigger(item.alert);

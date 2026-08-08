@@ -17,6 +17,7 @@ const MONTHS: Record<string, number> = {
 
 const CALENDAR_KEYWORDS = /work|shift|gym|appointment|meeting|movie|dinner|travel|class|lunch|breakfast|brunch|doctor|dentist|interview|coffee/i;
 const REMINDER_KEYWORDS = /clean|laundry|pay|buy|call|remember|pack|review|charge|prep|submit|pickup/i;
+const ADDRESS_PATTERN = /\d+\s+\S.*?(?:St(?:reet)?|Ave(?:nue)?|Blvd|Boulevard|Dr(?:ive)?|Rd|Road|Way|Ln|Lane|Ct|Court|Pl(?:ace)?|Pkwy|Parkway)\b[^\n]*/i;
 
 const DEFAULTS: UserSettings = {
   defaultCalendar: "Personal",
@@ -86,48 +87,83 @@ function parseStructuredSchedule(input: string, settings: UserSettings): Schedul
 }
 
 function parseStructuredBlock(block: string[], settings: UserSettings): ScheduleItem | null {
-  const type = block[0].toLowerCase().includes("event") ? "calendar" : "reminder";
-  const values: Record<string, string> = {};
+  try {
+    const type = block[0].toLowerCase().includes("event") ? "calendar" : "reminder";
+    const values: Record<string, string> = {};
 
-  for (const line of block.slice(1)) {
-    const match = line.match(/^([A-Za-z]+):\s*(.+)$/);
+    for (const line of block.slice(1)) {
+      const match = line.match(/^([A-Za-z]+):\s*(.+)$/);
+      if (match) {
+        values[match[1].toLowerCase()] = match[2].trim();
+      }
+    }
+
+    const title = values.title || "Untitled";
+    const date = values.date ? formatDateString(values.date) : "";
+    let itemType: ScheduleItem["type"] = type;
+    if (settings.autoDetectType) {
+      itemType = inferItemType(title, values.start, values.end, values.due);
+    }
+
+    // Validate required fields
+    let validationError: string | undefined;
+    if (type === "calendar") {
+      const missing: string[] = [];
+      if (!values.title) missing.push("title");
+      if (!values.date) missing.push("date");
+      if (!values.start) missing.push("start time");
+      if (!values.end) missing.push("end time");
+      if (missing.length > 0) {
+        const displayTitle = values.title ? stripEmoji(values.title) : "This event";
+        validationError = `${displayTitle} is missing: ${missing.join(", ")}.`;
+      }
+    } else {
+      if (!values.title) {
+        validationError = "A task is missing a title.";
+      }
+    }
+
+    const item: ScheduleItem = {
+      id: crypto.randomUUID(),
+      type: itemType,
+      title: stripEmoji(title),
+      emoji: extractEmoji(title),
+      date,
+      startTime: values.start ? normalizeTime(values.start) : undefined,
+      endTime: values.end ? normalizeTime(values.end) : undefined,
+      dueTime: values.due ? normalizeTime(values.due) : undefined,
+      notes: values.notes || "",
+      address: values.address || undefined,
+      location: values.location || "",
+      calendar: values.calendar || settings.defaultCalendar,
+      reminderList: values.list || settings.defaultReminderList,
+      reminderColumn: values.column || settings.defaultReminderColumn,
+      priority: normalizePriority(values.priority),
+      alert: normalizeAlert(values.alert, itemType, settings),
+      travelTime: values.travel || settings.defaultTravelTime,
+      allDay: false,
+      completed: false,
+      source: "structured",
+      inferredType: itemType,
+      edited: false,
+      validationError,
+    };
+
+    return applyLearningRules(item, settings);
+  } catch {
+    // Malformed block: return null so other blocks continue to parse
+    return null;
+  }
+}
+
+function detectAddressFromLines(lines: string[]): string | undefined {
+  for (const line of lines) {
+    const match = line.trim().match(ADDRESS_PATTERN);
     if (match) {
-      values[match[1].toLowerCase()] = match[2].trim();
+      return match[0].trim();
     }
   }
-
-  const title = values.title || "Untitled";
-  const date = values.date ? formatDateString(values.date) : "";
-  let itemType: ScheduleItem["type"] = type;
-  if (settings.autoDetectType) {
-    itemType = inferItemType(title, values.start, values.end, values.due);
-  }
-
-  const item: ScheduleItem = {
-    id: crypto.randomUUID(),
-    type: itemType,
-    title: stripEmoji(title),
-    emoji: extractEmoji(title),
-    date,
-    startTime: values.start ? normalizeTime(values.start) : undefined,
-    endTime: values.end ? normalizeTime(values.end) : undefined,
-    dueTime: values.due ? normalizeTime(values.due) : undefined,
-    notes: values.notes || "",
-    location: values.location || "",
-    calendar: values.calendar || settings.defaultCalendar,
-    reminderList: values.list || settings.defaultReminderList,
-    reminderColumn: values.column || settings.defaultReminderColumn,
-    priority: normalizePriority(values.priority),
-    alert: normalizeAlert(values.alert, itemType, settings),
-    travelTime: values.travel || settings.defaultTravelTime,
-    allDay: false,
-    completed: false,
-    source: "structured",
-    inferredType: itemType,
-    edited: false,
-  };
-
-  return applyLearningRules(item, settings);
+  return undefined;
 }
 
 function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleItem[] {
@@ -158,6 +194,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
 
     let title = "Untitled";
     const notes: string[] = [];
+    const bodyLines: string[] = [];
     let cursor = index + 1;
     while (cursor < lines.length) {
       const candidate = lines[cursor].trim();
@@ -175,6 +212,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
         break;
       }
 
+      bodyLines.push(candidate);
       if (title === "Untitled") {
         title = candidate;
       } else if (/^[•\-\*]\s*/.test(candidate)) {
@@ -186,6 +224,10 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
     }
 
     index = cursor - 1;
+
+    // Fallback: try to detect an address from body lines (excluding the title line)
+    const address = detectAddressFromLines(bodyLines.slice(1));
+
     const itemType: ScheduleItem["type"] = settings.autoDetectType ? inferItemType(title, startTime, endTime) : endTime ? "calendar" : "reminder";
     const item: ScheduleItem = {
       id: crypto.randomUUID(),
@@ -197,6 +239,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
       endTime,
       dueTime: itemType === "reminder" && startTime ? startTime : undefined,
       notes: notes.join("\n"),
+      address,
       location: "",
       calendar: settings.defaultCalendar,
       reminderList: settings.defaultReminderList,
@@ -274,6 +317,9 @@ export function resolveExportItems(items: ScheduleItem[]): ScheduleItem[] {
 
   const exportItems: ScheduleItem[] = [];
   for (const item of items) {
+    if (item.validationError) {
+      continue;
+    }
     const group = groups.get(duplicateKey(item)) ?? [];
     if (group.length > 1 && item.duplicateAction === "skip") {
       continue;
@@ -358,7 +404,7 @@ function normalizeAlert(value: string | undefined, type: ScheduleItem["type"], s
   return type === "calendar" ? settings.defaultCalendarAlert : settings.defaultReminderAlert;
 }
 
-function normalizeTime(value: string): string {
+export function normalizeTime(value: string): string {
   const trimmed = value.trim().toUpperCase();
   const match = trimmed.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
   if (!match) {

@@ -122,3 +122,169 @@ describe("duplicate handling and exports", () => {
     expect(payload).toContain("Life General");
   });
 });
+
+describe("canonical structured format", () => {
+  const settings = createDefaultSettings();
+
+  const canonicalInput = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-10
+Start: 10:45 AM
+End: 12:45 PM
+Address: 123 Main St, Springfield, MA 01103
+Notes: Pull day
+[/EVENT]
+
+[TASK]
+Title: 🧺 Start Laundry
+Date: 2026-08-10
+Due: 9:45 AM
+Address:
+List: Life General
+Column: Laundry
+Notes:
+[/TASK]
+
+[EVENT]
+Title: 🍟 McDonald's | Enfield
+Date: 2026-08-10
+Start: 4:00 PM
+End: 12:45 AM
+Address: 34 Hazard Ave, Enfield, CT 06082
+Notes: Work
+[/EVENT]`;
+
+  it("parses 3 items from the canonical sample", () => {
+    const items = parseSchedule(canonicalInput, settings);
+    expect(items).toHaveLength(3);
+  });
+
+  it("event with address stores address correctly", () => {
+    const items = parseSchedule(canonicalInput, settings);
+    expect(items[0]?.type).toBe("calendar");
+    expect(items[0]?.address).toBe("123 Main St, Springfield, MA 01103");
+  });
+
+  it("event without explicit address has no address", () => {
+    const sample = `[EVENT]
+Title: 🏋️ Workout
+Date: 2026-08-10
+Start: 9:00 AM
+End: 10:00 AM
+[/EVENT]`;
+    const items = parseSchedule(sample, settings);
+    expect(items[0]?.address).toBeUndefined();
+  });
+
+  it("task with address stores address correctly", () => {
+    const sample = `[TASK]
+Title: 🏪 Pick up groceries
+Date: 2026-08-10
+Due: 3:00 PM
+Address: 456 Elm St, Northampton, MA 01060
+List: Life General
+[/TASK]`;
+    const items = parseSchedule(sample, settings);
+    expect(items[0]?.type).toBe("reminder");
+    expect(items[0]?.address).toBe("456 Elm St, Northampton, MA 01060");
+  });
+
+  it("task without address has no address", () => {
+    const items = parseSchedule(canonicalInput, settings);
+    const laundry = items.find((i) => i.title.includes("Laundry"));
+    expect(laundry?.address).toBeUndefined();
+  });
+
+  it("overnight event: end time is on the next day (not truncated)", () => {
+    const items = parseSchedule(canonicalInput, settings);
+    const overnight = items.find((i) => i.title.includes("McDonald"));
+    expect(overnight?.startTime).toBe("16:00");
+    expect(overnight?.endTime).toBe("00:45");
+    // ICS should add a day for overnight events
+    const ics = buildIcsContent(items);
+    expect(ics).toContain("20260811T004500"); // end on Aug 11
+  });
+
+  it("address containing commas is preserved verbatim", () => {
+    const sample = `[EVENT]
+Title: Meeting
+Date: 2026-08-10
+Start: 2:00 PM
+End: 3:00 PM
+Address: 100 Main St, Suite 200, Boston, MA 02101
+[/EVENT]`;
+    const items = parseSchedule(sample, settings);
+    expect(items[0]?.address).toBe("100 Main St, Suite 200, Boston, MA 02101");
+  });
+
+  it("address with apartment info is preserved verbatim", () => {
+    const sample = `[EVENT]
+Title: Visit
+Date: 2026-08-10
+Start: 1:00 PM
+End: 2:00 PM
+Address: 77 Oak Ave, Apt 4B, Hartford, CT 06103
+[/EVENT]`;
+    const items = parseSchedule(sample, settings);
+    expect(items[0]?.address).toBe("77 Oak Ave, Apt 4B, Hartford, CT 06103");
+  });
+
+  it("empty Address field results in no address", () => {
+    const items = parseSchedule(canonicalInput, settings);
+    const laundry = items.find((i) => i.title.includes("Laundry"));
+    expect(laundry?.address === undefined || laundry?.address === "").toBe(true);
+  });
+
+  it("explicit Address field overrides any inferred location", () => {
+    const sample = `[EVENT]
+Title: Gym
+Date: 2026-08-10
+Start: 9:00 AM
+End: 10:00 AM
+Address: 99 Real St, Enfield, CT 06082
+Location: Planet Fitness
+[/EVENT]`;
+    const items = parseSchedule(sample, settings);
+    expect(items[0]?.address).toBe("99 Real St, Enfield, CT 06082");
+  });
+
+  it("multiple EVENT and TASK blocks in one paste all parse", () => {
+    const items = parseSchedule(canonicalInput, settings);
+    const events = items.filter((i) => i.type === "calendar");
+    const tasks = items.filter((i) => i.type === "reminder");
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(tasks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("malformed block does not break other valid blocks", () => {
+    const withBroken = `[EVENT]
+Title: Broken Event
+[/EVENT]
+
+[EVENT]
+Title: Good Event
+Date: 2026-08-10
+Start: 9:00 AM
+End: 10:00 AM
+Address: 123 Test St, Springfield, MA
+[/EVENT]`;
+    const items = parseSchedule(withBroken, settings);
+    const good = items.find((i) => i.title === "Good Event");
+    expect(good).toBeDefined();
+    expect(good?.address).toBe("123 Test St, Springfield, MA");
+  });
+
+  it("existing natural-language imports still work", () => {
+    const natural = `Date: Saturday, August 8, 2026
+
+8/8/26 9:30 AM - 11:30 AM
+💪 Gym
+
+8/8/26 1:00 PM
+🧼 Clean Bathroom`;
+    const items = parseSchedule(natural, settings);
+    expect(items).toHaveLength(2);
+    expect(items[0]?.type).toBe("calendar");
+    expect(items[1]?.type).toBe("reminder");
+  });
+});

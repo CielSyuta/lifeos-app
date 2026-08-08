@@ -5,20 +5,82 @@ LifeOS is a production-ready, mobile-first Progressive Web App for turning paste
 ## Features
 
 - Mobile-first iPhone-style UI with bottom navigation
-- Natural-language and structured schedule parsing
-- Editable preview cards with calendar/reminder toggles
-- Bulk actions for selecting, converting, deleting, and exporting items
+- **Canonical `[EVENT]` / `[TASK]` import format** — deterministic, structured parsing
+- Natural-language and legacy structured schedule parsing (fallback)
+- Address support — tap any address to open Apple Maps on iPhone
+- Per-item `Add` button (exports single ICS / opens Apple Shortcut URL)
+- Import progress indicator (`N of M added`)
+- Inline edit sheet for all fields including Address
 - Local-first persistence with localStorage
-- ICS export for Apple Calendar
+- ICS export for Apple Calendar (includes `LOCATION` from address)
 - Apple Shortcut JSON export for Apple Reminders automation
 - Duplicate detection and smart defaults
 - PWA manifest, standalone mode, service worker, and Apple-friendly icons
 
+## Canonical import format
+
+LifeOS supports a structured import format that is reliable and easy for LLMs to generate.
+
+### Event
+
+```
+[EVENT]
+Title: 💪 Gym
+Date: 2026-08-10
+Start: 10:45 AM
+End: 12:45 PM
+Address: 123 Main St, Springfield, MA 01103
+Notes: Pull day
+[/EVENT]
+```
+
+### Task / Reminder
+
+```
+[TASK]
+Title: 🧺 Start Laundry
+Date: 2026-08-10
+Due: 9:45 AM
+Address:
+List: Life General
+Column: Laundry
+Notes:
+[/TASK]
+```
+
+### Rules
+
+- `[EVENT]` … `[/EVENT]` — a calendar event
+- `[TASK]` … `[/TASK]` — a reminder / task
+- Each field on its own line: `Key: Value`
+- Keys are case-insensitive; canonical keys are: `Title`, `Date`, `Start`, `End`, `Due`, `Address`, `Notes`, `List`, `Column`
+- `Date` uses ISO format `YYYY-MM-DD`
+- Times support `10:45 AM`, `4:00 PM`, `12:45 AM`
+- Overnight events work automatically (end time < start time → end is next day)
+- Empty `Address:` → no address (field is optional)
+- `Address:` with a value → exact address, not modified or inferred
+
+### Parsing priority
+
+1. Canonical `[EVENT]` / `[TASK]` blocks (if detected)
+2. Legacy structured format (Date: header + `MM/DD/YY HH:MM AM – HH:MM PM` lines)
+3. Natural-language inference
+
+### Validation
+
+- Events require: `Title`, `Date`, `Start`, `End`
+- Tasks require: `Title`
+- Invalid items are shown individually with an error message — other items still parse
+
+## Sample import file
+
+See [`public/sample-import.txt`](public/sample-import.txt) for a copy-paste-ready example.
+
 ## Tech stack
 
-- Next.js
+- Next.js 16
 - TypeScript
-- Tailwind CSS
+- Tailwind CSS v4
 - PWA support
 - Vitest
 
@@ -42,6 +104,13 @@ Run the unit test suite:
 npm test
 ```
 
+## Lint and typecheck
+
+```bash
+npm run lint
+npx tsc --noEmit
+```
+
 ## Build
 
 ```bash
@@ -58,14 +127,15 @@ npm run build
 ## Install on iPhone
 
 1. Open the deployed app in Safari.
-2. Tap Share.
-3. Choose Add to Home Screen.
-4. Confirm the name and tap Add.
-5. Launch the app from the home screen for the standalone PWA experience.
+2. Tap Share → Add to Home Screen.
+3. Launch the app from the home screen for the standalone PWA experience.
 
-## Apple Shortcut flow
+## iPhone address integration
 
-1. Parse a schedule and tap Add All.
-2. Use the Copy Shortcut Payload button to copy the JSON payload.
-3. In Apple Shortcuts, create or install a shortcut that accepts JSON input and creates reminders in the desired list.
-4. Use the generated payload to populate the reminder tasks.
+When an item has an `Address:` field, tapping the address in the item list opens Apple Maps directly on iPhone (`maps.apple.com` URL scheme).
+
+## Browser / iOS limitations
+
+- **ICS download on iOS Safari**: tapping `Add` for a calendar event downloads a `.ics` file. iOS Safari may prompt to open it in Calendar directly. If not, open the Files app and tap the `.ics` file.
+- **Apple Shortcuts**: the `Add` button for tasks opens the Shortcuts URL scheme. This requires an Apple Shortcut named `LifeOS Import` to be installed on the device.
+- **Address maps**: uses `https://maps.apple.com/?q=...` which opens Apple Maps on iOS and Google Maps (or the default map app) on Android/desktop.

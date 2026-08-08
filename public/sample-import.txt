@@ -1,0 +1,27 @@
+[EVENT]
+Title: 💪 Gym
+Date: 2026-08-10
+Start: 10:45 AM
+End: 12:45 PM
+Address: 123 Main St, Springfield, MA 01103
+Notes: Pull day
+[/EVENT]
+
+[TASK]
+Title: 🧺 Start Laundry
+Date: 2026-08-10
+Due: 9:45 AM
+Address:
+List: Life General
+Column: Laundry
+Notes:
+[/TASK]
+
+[EVENT]
+Title: 🍟 McDonald's | Enfield
+Date: 2026-08-10
+Start: 4:00 PM
+End: 12:45 AM
+Address: 34 Hazard Ave, Enfield, CT 06082
+Notes: Work
+[/EVENT]
