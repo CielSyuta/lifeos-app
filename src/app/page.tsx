@@ -214,9 +214,9 @@ export default function Home() {
         <MockAuthScreen onAuthenticated={(acc) => setAccount(acc)} />
       )}
       {!loading && account && (
-      <>
-      <main className="safe-main min-h-screen bg-[#f0f2f7] text-[#0a0e1a] dark:bg-[#07080d] dark:text-[#eef0f8]">
-        <div className="mx-auto max-w-[430px]">
+        <>
+          <main className="safe-main min-h-screen bg-[#f0f2f7] text-[#0a0e1a] dark:bg-[#07080d] dark:text-[#eef0f8]">
+            <div className="mx-auto max-w-[430px]">
           <header className="mb-4">
             <p className="text-[12px] font-semibold uppercase tracking-widest text-[#007aff] dark:text-[#60a5fa]">Schedule Parser</p>
             <h1 className="mt-1 text-3xl font-bold">Paste → Parse → Add</h1>
@@ -407,22 +407,22 @@ export default function Home() {
               </button>
             </section>
           )}
-        </div>
-      </main>
+          </div>
+          </main>
 
-      {editingItem && (
-        <EditSheet
-          key={editingItem.id}
-          item={editingItem}
-          settings={settings}
-          onClose={() => setEditingId(null)}
-          onSave={(patch) => {
-            updateItem(editingItem.id, patch);
-            setEditingId(null);
-          }}
-        />
-      )}
-      </>
+          {editingItem && (
+            <EditSheet
+              key={editingItem.id}
+              item={editingItem}
+              settings={settings}
+              onClose={() => setEditingId(null)}
+              onSave={(patch) => {
+                updateItem(editingItem.id, patch);
+                setEditingId(null);
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   );

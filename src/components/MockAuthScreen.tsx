@@ -9,14 +9,22 @@ import { useEffect, useRef, useState } from "react";
 const FIRST = ["Alex", "Jordan", "Morgan", "Riley", "Casey", "Avery", "Quinn", "Sage", "Drew", "Reese"];
 const LAST = ["Schedule", "Planner", "Calendar", "Keeper", "Tracker", "Organizer", "Minder", "Wrangler"];
 
+function cryptoRandInt(max: number): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] % max;
+}
+
 function rnd(arr: string[]): string {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return arr[cryptoRandInt(arr.length)];
 }
 
 function generateAccount(): MockAccount {
   const firstName = rnd(FIRST);
   const lastName = rnd(LAST);
-  const suffix = Math.random().toString(36).slice(2, 7);
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 5);
   const username = `${firstName.toLowerCase()}.${lastName.toLowerCase()}${suffix}`;
   const email = `${username}@scheduleparser.app`;
   return { firstName, lastName, username, email, createdAt: new Date().toISOString() };
@@ -71,7 +79,11 @@ export function MockAuthScreen({ onAuthenticated }: Props) {
   const [step, setStep] = useState<Step>("welcome");
   const [account, setAccount] = useState<MockAccount | null>(null);
   const [progress, setProgress] = useState(0);
-  const [verifyCode] = useState(() => Math.floor(100000 + Math.random() * 900000).toString());
+  const [verifyCode] = useState(() => {
+    const buf = new Uint32Array(1);
+    crypto.getRandomValues(buf);
+    return (100000 + (buf[0] % 900000)).toString();
+  });
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /* Auto-sign-in if account already exists */
@@ -194,7 +206,18 @@ export function MockAuthScreen({ onAuthenticated }: Props) {
               {/* Sign-in link (Jotform puts secondary action below the primary) */}
               <div className="auth-secondary-row">
                 <span className="auth-secondary-text">Already signed up on this device?</span>
-                <button type="button" className="auth-link-btn" onClick={handleSignUp}>
+                <button
+                  type="button"
+                  className="auth-link-btn"
+                  onClick={() => {
+                    const existing = loadMockAccount();
+                    if (existing) {
+                      onAuthenticated(existing);
+                    } else {
+                      handleSignUp();
+                    }
+                  }}
+                >
                   Sign In
                 </button>
               </div>
@@ -244,7 +267,7 @@ export function MockAuthScreen({ onAuthenticated }: Props) {
                 <label className="auth-field-label">Verification code</label>
                 <div className="auth-otp-row">
                   {verifyCode.split("").map((digit, i) => (
-                    <div key={i} className="auth-otp-cell">{digit}</div>
+                    <div key={`digit-${i}`} className="auth-otp-cell">{digit}</div>
                   ))}
                 </div>
                 <p className="auth-field-hint">Auto-verifying — no action needed</p>
