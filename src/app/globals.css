@@ -11,6 +11,12 @@
   --border: rgba(0, 0, 0, 0.07);
   --text-secondary: #5c6478;
   --accent: #007aff;
+
+  /* Safe-area insets for PWA standalone mode */
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
 }
 
 @theme inline {
@@ -386,3 +392,452 @@ button {
 .dark .card-row {
   border-bottom-color: rgba(255,255,255,0.06);
 }
+
+/* ═══════════════════════════════════════════════════
+   PWA STANDALONE SAFE-AREA FIX
+   Adds notch / home-indicator clearance when the app
+   is installed as a bookmark on iOS / Android.
+═══════════════════════════════════════════════════ */
+.safe-main {
+  padding-top: calc(1.25rem + var(--sat));
+  padding-bottom: calc(7rem + var(--sab));
+  padding-left: calc(1rem + var(--sal));
+  padding-right: calc(1rem + var(--sar));
+}
+
+/* ═══════════════════════════════════════════════════
+   MOCK AUTH SCREEN — Jotform-style UI patterns
+   Layout, field structure, step bar, buttons.
+   Colors come from the app's own CSS variables above.
+═══════════════════════════════════════════════════ */
+
+/* Keyframes */
+@keyframes auth-fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes auth-scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes auth-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes auth-progress-shine {
+  0%   { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+
+/* Root wrapper — full viewport, scrollable */
+.auth-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--background);
+  padding-top: var(--sat);
+  padding-bottom: var(--sab);
+}
+
+/* ── Header strip (Jotform always has a branded top bar) ── */
+.auth-header-strip {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border);
+  flex: none;
+}
+
+.auth-header-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 14px 20px;
+}
+
+.auth-header-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--foreground);
+}
+
+/* ── Page body (centred scroll area) ── */
+.auth-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 28px 20px 40px;
+  gap: 16px;
+}
+
+/* ── Form card (Jotform: white card, clear border, generous padding) ── */
+.auth-form-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  animation: auth-scale-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Step indicator bar (Jotform multi-step pattern) ── */
+.auth-steps-bar {
+  display: flex;
+  align-items: center;
+  padding: 16px 24px 0;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 16px;
+}
+
+.auth-step-item {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.auth-step-circle {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex: none;
+  background: var(--border);
+  color: var(--text-secondary);
+  transition: background 200ms ease, color 200ms ease;
+}
+
+.auth-step-circle--active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.auth-step-circle--done {
+  background: #34c759;
+  color: #fff;
+}
+
+.auth-step-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 200ms ease;
+}
+
+.auth-step-label--active {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.auth-step-connector {
+  flex: 1;
+  height: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  margin: 0 4px;
+  transition: background 300ms ease;
+}
+
+.auth-step-connector--done {
+  background: #34c759;
+}
+
+/* ── Form body ── */
+.auth-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  animation: auth-fade-up 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.auth-body--center {
+  align-items: center;
+  text-align: center;
+}
+
+/* ── Form header (Jotform: centered icon + bold title + subtitle) ── */
+.auth-form-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.auth-form-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--foreground);
+  line-height: 1.2;
+}
+
+.auth-form-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+/* ── Feature list ── */
+.auth-feature-list {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.auth-feature-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--foreground);
+}
+
+.auth-feature-row:last-child {
+  border-bottom: none;
+}
+
+.auth-feature-icon {
+  font-size: 18px;
+  flex: none;
+  width: 24px;
+  text-align: center;
+}
+
+.auth-feature-text {
+  flex: 1;
+  line-height: 1.4;
+}
+
+/* ── Field group (Jotform: label above, full-width value box below) ── */
+.auth-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.auth-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.1px;
+}
+
+/* Read-only display field */
+.auth-field-readonly {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--foreground);
+  font-family: inherit;
+  min-height: 46px;
+  word-break: break-all;
+}
+
+.auth-field-readonly-icon {
+  font-size: 16px;
+  flex: none;
+}
+
+.auth-field-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ── OTP code row (Jotform-style verification display) ── */
+.auth-otp-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.auth-otp-cell {
+  width: 42px;
+  height: 50px;
+  border-radius: 10px;
+  border: 2px solid var(--accent);
+  background: var(--surface-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0;
+}
+
+/* ── Progress bar (Jotform labelled track) ── */
+.auth-progress-section {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.auth-progress-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.auth-progress-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.auth-progress-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.auth-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.auth-progress-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--accent);
+  transition: width 80ms linear;
+}
+
+.auth-progress-fill--accent2 {
+  background: #34c759;
+}
+
+/* ── Primary submit button (Jotform: full-width, bold, rounded) ── */
+.auth-submit-btn {
+  width: 100%;
+  min-height: 50px;
+  padding: 14px 24px;
+  border-radius: 12px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  cursor: pointer;
+  transition:
+    opacity 150ms ease,
+    transform 100ms ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  margin-bottom: 12px;
+}
+
+.auth-submit-btn:active {
+  opacity: 0.82;
+  transform: scale(0.98);
+}
+
+/* ── Helper / legal text ── */
+.auth-helper-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+/* ── Secondary row (sign-in link) ── */
+.auth-secondary-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+.auth-secondary-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.auth-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* ── Success icon ── */
+.auth-success-icon {
+  margin-bottom: 16px;
+  animation: auth-scale-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* ── Footer note ── */
+.auth-footer-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  opacity: 0.7;
+  margin: 0;
+}
+
+/* ── Dark mode overrides for auth ── */
+@media (prefers-color-scheme: dark) {
+  .auth-form-card {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  }
+  .auth-otp-cell {
+    background: var(--surface-raised);
+  }
+}
+
+.dark .auth-form-card {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+.dark .auth-otp-cell {
+  background: var(--surface-raised);
+}
+
