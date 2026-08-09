@@ -26,12 +26,17 @@ export function loadSettings(): UserSettings {
       defaultTravelTime?: string;
     };
 
+    const defaults = createDefaultSettings();
+
     return {
-      ...createDefaultSettings(),
+      ...defaults,
       ...parsed,
-      defaultEventAlert: parsed.defaultEventAlert ?? parsed.defaultCalendarAlert ?? createDefaultSettings().defaultEventAlert,
+      defaultEventAlert: parsed.defaultEventAlert ?? parsed.defaultCalendarAlert ?? defaults.defaultEventAlert,
       defaultTravelTimeMinutes: parsed.defaultTravelTimeMinutes ?? parseLegacyTravelTime(parsed.defaultTravelTime),
       learnedRules: Array.isArray(parsed.learnedRules) ? parsed.learnedRules : [],
+      calendarDefaults: { ...defaults.calendarDefaults, ...parsed.calendarDefaults },
+      calendarRoutingRules: Array.isArray(parsed.calendarRoutingRules) ? parsed.calendarRoutingRules : [],
+      notificationSettings: { ...defaults.notificationSettings, ...parsed.notificationSettings },
     };
   } catch {
     return createDefaultSettings();

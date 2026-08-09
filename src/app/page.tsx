@@ -12,6 +12,13 @@ import { addEventNative } from "@/lib/native/calendar";
 import { hapticLight, hapticSuccess } from "@/lib/native/haptics";
 import { addReminderNative } from "@/lib/native/reminders";
 import {
+  disableDailyReminder,
+  enableDailyReminder,
+  sendTestNotification,
+  syncReminderPreferences,
+} from "@/lib/push/client";
+import { isIos, isPushSupported, needsIosInstallGuidance } from "@/lib/push/environment";
+import {
   clearAllData,
   loadActiveImport,
   loadHistory,
@@ -22,7 +29,7 @@ import {
   saveOnboardingCompleted,
   saveSettings,
 } from "@/lib/storage";
-import type { ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
+import type { CalendarRoutingRule, ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { OnboardingScreen } from "@/components/OnboardingScreen";
 
@@ -90,6 +97,9 @@ export default function Home() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [donateOpen, setDonateOpen] = useState(false);
+  const [reminderStatus, setReminderStatus] = useState<string | null>(null);
+  const [reminderBusy, setReminderBusy] = useState(false);
 
   useEffect(() => {
     saveSettings(settings);
@@ -102,6 +112,19 @@ export default function Home() {
   useEffect(() => {
     saveActiveImport(activeImport);
   }, [activeImport]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+      return;
+    }
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "notification-click") {
+        setActiveTab("import");
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handleMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", handleMessage);
+  }, []);
 
   const groupedItems = useMemo(() => {
     const groups = new Map<string, ScheduleItem[]>();
@@ -231,6 +254,86 @@ export default function Home() {
     window.location.reload();
   }
 
+  async function handleEnableDailyReminder() {
+    if (needsIosInstallGuidance()) {
+      setReminderStatus("To receive Schedule Parser notifications on iPhone, install the app to your Home Screen first: Safari → Share → Add to Home Screen.");
+      return;
+    }
+
+    setReminderBusy(true);
+    const result = await enableDailyReminder(settings.notificationSettings);
+    setReminderBusy(false);
+
+    if (result.status === "success") {
+      setSettings((current) => ({
+        ...current,
+        notificationSettings: { ...current.notificationSettings, dailyReminderEnabled: true, pushSubscribed: true },
+      }));
+      setReminderStatus("Daily Planning Reminder enabled.");
+      return;
+    }
+
+    setReminderStatus(result.message);
+  }
+
+  async function handleDisableDailyReminder() {
+    setReminderBusy(true);
+    await disableDailyReminder(settings.notificationSettings.deviceId);
+    setReminderBusy(false);
+    setSettings((current) => ({
+      ...current,
+      notificationSettings: { ...current.notificationSettings, dailyReminderEnabled: false, pushSubscribed: false },
+    }));
+    setReminderStatus("Daily Planning Reminder disabled.");
+  }
+
+  async function handleTestNotification() {
+    setReminderBusy(true);
+    const result = await sendTestNotification(settings.notificationSettings.deviceId);
+    setReminderBusy(false);
+    setReminderStatus(result.message);
+  }
+
+  function updateNotificationSettings(patch: Partial<UserSettings["notificationSettings"]>) {
+    setSettings((current) => {
+      const nextNotificationSettings = { ...current.notificationSettings, ...patch };
+      if (nextNotificationSettings.pushSubscribed) {
+        void syncReminderPreferences(nextNotificationSettings);
+      }
+      return { ...current, notificationSettings: nextNotificationSettings };
+    });
+  }
+
+  function addRoutingRule() {
+    const rule: CalendarRoutingRule = {
+      id: crypto.randomUUID(),
+      matchText: "",
+      targetCalendar: settings.calendarDefaults.workCalendar,
+    };
+    setSettings((current) => ({ ...current, calendarRoutingRules: [...current.calendarRoutingRules, rule] }));
+  }
+
+  function updateRoutingRule(id: string, patch: Partial<CalendarRoutingRule>) {
+    setSettings((current) => ({
+      ...current,
+      calendarRoutingRules: current.calendarRoutingRules.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)),
+    }));
+  }
+
+  function removeRoutingRule(id: string) {
+    setSettings((current) => ({
+      ...current,
+      calendarRoutingRules: current.calendarRoutingRules.filter((rule) => rule.id !== id),
+    }));
+  }
+
+  function resetCalendarDefaults() {
+    setSettings((current) => ({
+      ...current,
+      calendarDefaults: { personalCalendar: "Personal", workCalendar: "Work", otherCalendar: "Other" },
+    }));
+  }
+
   return (
     <div className={settings.darkMode ? "dark" : ""}>
       {loading && <LoadingScreen onDone={() => setLoading(false)} />}
@@ -321,6 +424,9 @@ export default function Home() {
                                   {item.address}
                                 </a>
                               ) : null}
+                              {item.type === "calendar" && item.calendar ? (
+                                <p className="mt-1 text-xs text-[#9ca3af] dark:text-[#6b7280]">Calendar: {item.calendar}</p>
+                              ) : null}
                               {item.travelTimeMinutes !== null ? <p className="mt-1 text-xs text-[#5c6478] dark:text-[#8892a4]">Travel: {item.travelTimeMinutes} min</p> : null}
                               <p className="mt-1 text-xs text-[#5c6478] dark:text-[#8892a4]">Alert: {formatAlertLabel(item.alert)}</p>
                               {item.type === "reminder" ? (
@@ -342,7 +448,7 @@ export default function Home() {
                   ))}
 
                   <p className="rounded-xl bg-[#fff7e6] px-3 py-2 text-xs text-[#92400e] dark:bg-[#2b1f08] dark:text-[#fcd34d]">
-                    Travel Time is preserved in parser data. On iOS, Calendar and Reminders access is requested only when you tap Add.
+                    Travel Time is preserved in parser data. On iOS, Calendar and Reminders access is requested only when you tap Add. The resolved Calendar shown above is a preference — final placement still depends on Apple&apos;s import UI.
                   </p>
                 </div>
               )}
@@ -395,6 +501,149 @@ export default function Home() {
                 <SwitchSetting label="Save Import History" checked={settings.saveImportHistory} onChange={(value) => setSettings((current) => ({ ...current, saveImportHistory: value }))} />
               </div>
 
+              {/* Calendar Defaults */}
+              <div>
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">Calendar Defaults</p>
+                  <button type="button" onClick={resetCalendarDefaults} className="text-xs font-semibold text-[#007aff] dark:text-[#60a5fa]">Reset</button>
+                </div>
+                <div className="card-list">
+                  <TextSetting
+                    label="Personal Calendar"
+                    value={settings.calendarDefaults.personalCalendar}
+                    onChange={(value) => setSettings((current) => ({ ...current, calendarDefaults: { ...current.calendarDefaults, personalCalendar: value } }))}
+                  />
+                  <TextSetting
+                    label="Work Calendar"
+                    value={settings.calendarDefaults.workCalendar}
+                    onChange={(value) => setSettings((current) => ({ ...current, calendarDefaults: { ...current.calendarDefaults, workCalendar: value } }))}
+                  />
+                  <TextSetting
+                    label="Other Calendar"
+                    value={settings.calendarDefaults.otherCalendar}
+                    onChange={(value) => setSettings((current) => ({ ...current, calendarDefaults: { ...current.calendarDefaults, otherCalendar: value } }))}
+                  />
+                </div>
+                <p className="mt-2 px-1 text-xs text-[#9ca3af]">
+                  Schedule Parser can&apos;t read Apple Calendar accounts directly. These names are used to label events; final calendar selection still depends on Apple&apos;s import UI.
+                </p>
+              </div>
+
+              {/* Calendar Routing Rules */}
+              <div>
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">Calendar Routing Rules</p>
+                  <button type="button" onClick={addRoutingRule} className="text-xs font-semibold text-[#007aff] dark:text-[#60a5fa]">+ Add Rule</button>
+                </div>
+                {settings.calendarRoutingRules.length === 0 ? (
+                  <p className="rounded-xl bg-white p-4 text-sm text-[#5c6478] shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:text-[#8892a4] dark:ring-white/6">
+                    No rules yet. Add one so titles like &quot;McDonald&apos;s&quot; route to Work automatically.
+                  </p>
+                ) : (
+                  <div className="card-list">
+                    {settings.calendarRoutingRules.map((rule) => (
+                      <div key={rule.id} className="card-row items-center gap-2">
+                        <input
+                          value={rule.matchText}
+                          onChange={(event) => updateRoutingRule(rule.id, { matchText: event.target.value })}
+                          placeholder="Match text (e.g. Gym)"
+                          className="min-w-0 flex-1 rounded-lg border border-black/10 px-2 py-1.5 text-sm outline-none dark:border-white/10 dark:bg-[#161820]"
+                        />
+                        <span className="text-xs text-[#9ca3af]">→</span>
+                        <input
+                          value={rule.targetCalendar}
+                          onChange={(event) => updateRoutingRule(rule.id, { targetCalendar: event.target.value })}
+                          placeholder="Target calendar"
+                          className="w-28 rounded-lg border border-black/10 px-2 py-1.5 text-sm outline-none dark:border-white/10 dark:bg-[#161820]"
+                        />
+                        <button type="button" onClick={() => removeRoutingRule(rule.id)} className="shrink-0 text-xs font-semibold text-[#ef4444]" aria-label={`Remove rule for ${rule.matchText || "new rule"}`}>
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 px-1 text-xs text-[#9ca3af]">
+                  Rules are case-insensitive. An explicit <code>Calendar:</code> value in structured input always overrides these rules.
+                </p>
+              </div>
+
+              {/* Notifications */}
+              <div>
+                <p className="mb-1 px-1 text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">Notifications</p>
+                <div className="card-list">
+                  <SwitchSetting
+                    label="Daily Planning Reminder"
+                    checked={settings.notificationSettings.dailyReminderEnabled}
+                    onChange={(value) => {
+                      if (value) {
+                        void handleEnableDailyReminder();
+                      } else {
+                        void handleDisableDailyReminder();
+                      }
+                    }}
+                  />
+                  <label className="card-row justify-between">
+                    <span className="text-sm text-[#0a0e1a] dark:text-[#eef0f8]">Time</span>
+                    <input
+                      type="time"
+                      value={settings.notificationSettings.dailyReminderTime}
+                      onChange={(event) => updateNotificationSettings({ dailyReminderTime: event.target.value })}
+                      className="bg-transparent text-right text-sm text-[#5c6478] outline-none dark:text-[#8892a4]"
+                    />
+                  </label>
+                  <label className="card-row flex-col items-start gap-1">
+                    <span className="text-sm text-[#0a0e1a] dark:text-[#eef0f8]">Message</span>
+                    <input
+                      value={settings.notificationSettings.dailyReminderMessage}
+                      onChange={(event) => updateNotificationSettings({ dailyReminderMessage: event.target.value })}
+                      className="w-full rounded-lg border border-black/10 px-2 py-1.5 text-sm outline-none dark:border-white/10 dark:bg-[#161820]"
+                    />
+                  </label>
+                </div>
+
+                {isIos() && needsIosInstallGuidance() && (
+                  <p className="mt-2 rounded-xl bg-[#e8f2ff] px-3 py-2 text-xs text-[#0057b7] dark:bg-[#0c1e38] dark:text-[#93c5fd]">
+                    To receive Schedule Parser notifications on iPhone, install the app to your Home Screen first: Safari → Share → Add to Home Screen.
+                  </p>
+                )}
+
+                {!isPushSupported() && !needsIosInstallGuidance() && (
+                  <p className="mt-2 rounded-xl bg-[#f3f4f6] px-3 py-2 text-xs text-[#374151] dark:bg-[#1f2937] dark:text-[#d1d5db]">
+                    Push notifications aren&apos;t supported in this browser. You can still use Schedule Parser without them.
+                  </p>
+                )}
+
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={reminderBusy}
+                    onClick={() => void handleEnableDailyReminder()}
+                    className="rounded-xl bg-[#007aff] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-[#3b82f6]"
+                  >
+                    Enable Daily Reminder
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reminderBusy || !settings.notificationSettings.pushSubscribed}
+                    onClick={() => void handleTestNotification()}
+                    className="rounded-xl bg-[#f0f2f7] px-3 py-2 text-sm font-semibold text-[#0a0e1a] disabled:opacity-50 dark:bg-[#161820] dark:text-[#eef0f8]"
+                  >
+                    Test Notification
+                  </button>
+                </div>
+
+                {reminderStatus && (
+                  <p className="mt-2 rounded-xl bg-[#e8f2ff] px-3 py-2 text-xs text-[#0057b7] dark:bg-[#0c1e38] dark:text-[#93c5fd]" role="status" aria-live="polite">
+                    {reminderStatus}
+                  </p>
+                )}
+
+                <p className="mt-2 px-1 text-xs text-[#9ca3af]">
+                  Timezone: {settings.notificationSettings.timezone}. A future evening reminder can reuse these same settings.
+                </p>
+              </div>
+
               {/* Privacy & About */}
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:ring-white/6">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">Privacy</p>
@@ -421,6 +670,15 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+
+              {/* Donate */}
+              <button
+                type="button"
+                onClick={() => setDonateOpen(true)}
+                className="w-full rounded-xl bg-[#fff7e6] px-4 py-3 text-sm font-semibold text-[#92400e] dark:bg-[#2b1f08] dark:text-[#fcd34d]"
+              >
+                💛 Support the developer
+              </button>
 
               {/* Reset */}
               {resetConfirm ? (
@@ -460,6 +718,8 @@ export default function Home() {
               }}
             />
           )}
+
+          {donateOpen && <DonateModal onClose={() => setDonateOpen(false)} />}
         </>
       )}
     </div>
@@ -496,7 +756,7 @@ function EditSheet({
               <TextField label="End" value={form.endTime ?? ""} onChange={(value) => setForm((current) => ({ ...current, endTime: value || undefined }))} />
               <SelectField label="Travel Time" value={form.travelTimeMinutes === null ? "none" : String(form.travelTimeMinutes)} options={TRAVEL_TIME_OPTIONS} onChange={(value) => setForm((current) => ({ ...current, travelTimeMinutes: value === "none" ? null : Number(value) }))} />
               <TextField label="Repeat" value={form.repeat} onChange={(value) => setForm((current) => ({ ...current, repeat: value }))} />
-              <TextField label="Calendar" value={form.calendar} onChange={(value) => setForm((current) => ({ ...current, calendar: value }))} />
+              <CalendarPickerField label="Calendar" value={form.calendar} settings={settings} onChange={(value) => setForm((current) => ({ ...current, calendar: value }))} />
               <TextField label="Invitees" value={form.invitees} onChange={(value) => setForm((current) => ({ ...current, invitees: value }))} />
               <SelectField label="Alert" value={form.alert} options={EVENT_ALERT_OPTIONS} onChange={(value) => setForm((current) => ({ ...current, alert: value }))} />
               <TextField label="URL" value={form.url} onChange={(value) => setForm((current) => ({ ...current, url: value }))} />
@@ -535,6 +795,34 @@ function EditSheet({
             Save
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+const CASHAPP_HANDLE = "$jcworkins";
+const CASHAPP_URL = `https://cash.app/${CASHAPP_HANDLE}`;
+
+function DonateModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Support the developer">
+      <div className="w-full max-w-[360px] rounded-2xl bg-white p-5 text-center dark:bg-[#0f1117]">
+        <p className="text-3xl">💛</p>
+        <h2 className="mt-2 text-lg font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">Support Schedule Parser</h2>
+        <p className="mt-2 text-sm text-[#5c6478] dark:text-[#8892a4]">
+          If this app saves you time, consider sending a tip via Cash App.
+        </p>
+        <p className="mt-2 text-sm font-semibold text-[#007aff] dark:text-[#60a5fa]">{CASHAPP_HANDLE}</p>
+        <button
+          type="button"
+          onClick={() => window.open(CASHAPP_URL, "_blank", "noopener,noreferrer")}
+          className="mt-4 block w-full rounded-xl bg-[#007aff] px-4 py-3 text-sm font-semibold text-white dark:bg-[#3b82f6]"
+        >
+          Open Cash App
+        </button>
+        <button type="button" onClick={onClose} className="mt-2 w-full rounded-xl bg-[#f3f4f6] px-4 py-3 text-sm font-semibold text-[#374151] dark:bg-[#1f2937] dark:text-[#d1d5db]">
+          Not now
+        </button>
       </div>
     </div>
   );
@@ -635,6 +923,61 @@ function SelectField({ label, value, options, onChange }: { label: string; value
           <option key={option} value={option}>{option}</option>
         ))}
       </select>
+    </label>
+  );
+}
+
+const CUSTOM_CALENDAR_OPTION = "__custom__";
+
+/** Calendar select using the presets from Parser Settings, with a fallback for custom manual entry. */
+function CalendarPickerField({
+  label,
+  value,
+  settings,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  settings: UserSettings;
+  onChange: (value: string) => void;
+}) {
+  const presets = [
+    settings.calendarDefaults.personalCalendar,
+    settings.calendarDefaults.workCalendar,
+    settings.calendarDefaults.otherCalendar,
+  ].filter((preset, index, all) => preset && all.indexOf(preset) === index);
+
+  const isCustom = value.length > 0 && !presets.includes(value);
+  const [showCustomInput, setShowCustomInput] = useState(isCustom);
+
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[#6b7280] dark:text-[#9ca3af]">{label}</span>
+      <select
+        value={showCustomInput ? CUSTOM_CALENDAR_OPTION : value}
+        onChange={(event) => {
+          if (event.target.value === CUSTOM_CALENDAR_OPTION) {
+            setShowCustomInput(true);
+            return;
+          }
+          setShowCustomInput(false);
+          onChange(event.target.value);
+        }}
+        className="w-full rounded-lg border border-black/10 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-[#161820]"
+      >
+        {presets.map((preset) => (
+          <option key={preset} value={preset}>{preset}</option>
+        ))}
+        <option value={CUSTOM_CALENDAR_OPTION}>Custom…</option>
+      </select>
+      {showCustomInput && (
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Custom calendar name"
+          className="mt-2 w-full rounded-lg border border-black/10 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-[#161820]"
+        />
+      )}
     </label>
   );
 }

@@ -42,6 +42,38 @@ export interface LearnedRule {
   priority?: Priority;
 }
 
+/** A simple, user-managed rule that routes matching event titles to a target calendar name. */
+export interface CalendarRoutingRule {
+  id: string;
+  /** Substring matched case-insensitively against the event title. */
+  matchText: string;
+  /** Calendar name to assign when this rule matches. */
+  targetCalendar: string;
+}
+
+export interface CalendarDefaults {
+  personalCalendar: string;
+  workCalendar: string;
+  otherCalendar: string;
+}
+
+export interface NotificationSettings {
+  dailyReminderEnabled: boolean;
+  /** 24h "HH:MM" local time string, e.g. "08:00". */
+  dailyReminderTime: string;
+  dailyReminderMessage: string;
+  /** Reserved for a future second reminder; not fully wired up yet. */
+  eveningReminderEnabled: boolean;
+  eveningReminderTime: string;
+  eveningReminderMessage: string;
+  /** IANA timezone name, e.g. "America/New_York", captured via Intl.DateTimeFormat. */
+  timezone: string;
+  /** Stable per-device id used to associate a push subscription with reminder preferences. */
+  deviceId: string;
+  /** Whether the user has completed the push subscription flow at least once. */
+  pushSubscribed: boolean;
+}
+
 export interface UserSettings {
   defaultCalendar: string;
   defaultEventAlert: string;
@@ -59,6 +91,9 @@ export interface UserSettings {
   saveImportHistory: boolean;
   defaultLocationBehavior: string;
   learnedRules: LearnedRule[];
+  calendarDefaults: CalendarDefaults;
+  calendarRoutingRules: CalendarRoutingRule[];
+  notificationSettings: NotificationSettings;
 }
 
 export interface ImportSession {
@@ -87,4 +122,29 @@ export interface ShortcutReminderTask {
 
 export interface ShortcutPayload {
   tasks: ShortcutReminderTask[];
+}
+
+/** A minimal, standards-compliant Web Push subscription as returned by PushSubscription.toJSON(). */
+export interface WebPushSubscriptionJson {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+/**
+ * Server-side record for a single device's daily reminder preferences.
+ * Only push-subscription and scheduling metadata is stored — never schedule content.
+ */
+export interface PushSubscriptionRecord {
+  deviceId: string;
+  subscription: WebPushSubscriptionJson;
+  timezone: string;
+  dailyReminderEnabled: boolean;
+  dailyReminderTime: string;
+  dailyReminderMessage: string;
+  /** ISO date (YYYY-MM-DD) in the user's timezone of the last successful send, to avoid duplicate sends. */
+  lastSentDate?: string;
+  updatedAt: string;
 }
