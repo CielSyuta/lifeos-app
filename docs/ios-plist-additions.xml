@@ -1,0 +1,4 @@
+<key>NSCalendarsFullAccessUsageDescription</key>
+<string>LifeOS needs calendar access to create events from your imported schedule.</string>
+<key>NSRemindersFullAccessUsageDescription</key>
+<string>LifeOS needs reminders access to create tasks from your imported schedule.</string>

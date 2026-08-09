@@ -7,6 +7,8 @@ const HISTORY_KEY = "schedule-parser-history";
 const LEGACY_HISTORY_KEY = "lifeos-history";
 const ACTIVE_IMPORT_KEY = "schedule-parser-active-import";
 const LEGACY_ACTIVE_IMPORT_KEY = "lifeos-active-import";
+const ONBOARDING_KEY = "lifeos-onboarding-completed";
+const MOCK_ACCOUNT_KEY = "sp_mock_account";
 
 export function loadSettings(): UserSettings {
   if (typeof window === "undefined") {
@@ -115,4 +117,19 @@ export function clearAllData(): void {
   window.localStorage.removeItem(LEGACY_SETTINGS_KEY);
   window.localStorage.removeItem(LEGACY_HISTORY_KEY);
   window.localStorage.removeItem(LEGACY_ACTIVE_IMPORT_KEY);
+  // Remove legacy mock-account key if present
+  window.localStorage.removeItem(MOCK_ACCOUNT_KEY);
+  // Keep onboarding state so users don't see the intro again after a data reset
+}
+
+export function loadOnboardingCompleted(): boolean {
+  if (typeof window === "undefined") return true;
+  // Treat existing mock-account presence as "already onboarded" for migration
+  const hadMockAccount = window.localStorage.getItem(MOCK_ACCOUNT_KEY) !== null;
+  return hadMockAccount || window.localStorage.getItem(ONBOARDING_KEY) === "1";
+}
+
+export function saveOnboardingCompleted(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(ONBOARDING_KEY, "1");
 }
