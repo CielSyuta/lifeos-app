@@ -39,10 +39,10 @@ export function needsIosInstallGuidance(): boolean {
  * Resolves the URL Schedule Parser should open when a push notification is tapped.
  * Kept as a pure, testable function; the service worker (public/sw.js) uses the same
  * "/?tab=import" target so tapping any notification lands on the Import screen.
+ * Every payload type currently routes to Import; if a future notification type needs a
+ * different destination, branch on `notificationData.type` here.
  */
 export function getNotificationClickTarget(notificationData?: { type?: string }): string {
-  if (notificationData?.type === "daily-planning-reminder") {
-    return "/?tab=import";
-  }
+  void notificationData;
   return "/?tab=import";
 }

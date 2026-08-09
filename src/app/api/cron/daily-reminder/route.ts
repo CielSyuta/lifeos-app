@@ -8,12 +8,18 @@ import { isPushConfigured, sendPushNotification } from "@/lib/server/webPush";
 // server-triggered and evaluated against each subscriber's own timezone and configured time.
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
+  const authHeader = request.headers.get("authorization");
+
   if (secret) {
-    const authHeader = request.headers.get("authorization");
     const expected = "Bearer " + secret;
     if (authHeader !== expected) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
+  } else if (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV) {
+    // This endpoint can trigger a bulk push send to every subscriber, so refuse to run
+    // unauthenticated once deployed. CRON_SECRET must be configured for production/Vercel
+    // environments; it's only optional for local development.
+    return NextResponse.json({ error: "CRON_SECRET is not configured." }, { status: 401 });
   }
 
   if (!isPushConfigured()) {
