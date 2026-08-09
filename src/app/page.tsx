@@ -13,6 +13,7 @@ import { buildShortcutPayload, buildShortcutUrl } from "@/lib/reminders/shortcut
 import { clearAllData, loadActiveImport, loadHistory, loadSettings, saveActiveImport, saveHistory, saveSettings } from "@/lib/storage";
 import type { ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
 import { LoadingScreen } from "@/components/LoadingScreen";
+import { type MockAccount, MockAuthScreen, clearMockAccount, loadMockAccount } from "@/components/MockAuthScreen";
 
 const SAMPLE_SCHEDULE = `[EVENT]
 Title: 🌅 Morning Routine
@@ -64,6 +65,7 @@ const REMINDER_ALERT_OPTIONS = ["none", "at_due_time", "5m", "10m", "15m", "30m"
 const TRAVEL_TIME_OPTIONS = ["none", "15", "30", "45", "60", "90"];
 
 export default function Home() {
+  const [account, setAccount] = useState<MockAccount | null>(() => loadMockAccount());
   const [settings, setSettings] = useState<UserSettings>(() => loadSettings());
   const [scheduleText, setScheduleText] = useState(() => loadActiveImport()?.sourceText ?? SAMPLE_SCHEDULE);
   const [parsedItems, setParsedItems] = useState<ScheduleItem[]>(() => loadActiveImport()?.items ?? []);
@@ -208,7 +210,12 @@ export default function Home() {
   return (
     <div className={settings.darkMode ? "dark" : ""}>
       {loading && <LoadingScreen onDone={() => setLoading(false)} />}
-      <main className="min-h-screen bg-[#f0f2f7] px-4 pb-28 pt-5 text-[#0a0e1a] dark:bg-[#07080d] dark:text-[#eef0f8]">
+      {!loading && !account && (
+        <MockAuthScreen onAuthenticated={(acc) => setAccount(acc)} />
+      )}
+      {!loading && account && (
+      <>
+      <main className="safe-main min-h-screen bg-[#f0f2f7] text-[#0a0e1a] dark:bg-[#07080d] dark:text-[#eef0f8]">
         <div className="mx-auto max-w-[430px]">
           <header className="mb-4">
             <p className="text-[12px] font-semibold uppercase tracking-widest text-[#007aff] dark:text-[#60a5fa]">Schedule Parser</p>
@@ -335,6 +342,35 @@ export default function Home() {
 
           {activeTab === "settings" && (
             <section className="space-y-4">
+              {/* Account info card (Jotform-style: label above read-only field) */}
+              {account && (
+                <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:ring-white/6">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">Account</p>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#9ca3af]">Name</p>
+                      <p className="mt-0.5 text-sm font-medium text-[#0a0e1a] dark:text-[#eef0f8]">{account.firstName} {account.lastName}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#9ca3af]">Account Email</p>
+                      <p className="mt-0.5 break-all text-sm font-medium text-[#0a0e1a] dark:text-[#eef0f8]">{account.email}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm("Sign out? You will need to create a new account.")) {
+                        clearMockAccount();
+                        clearAllData();
+                        window.location.reload();
+                      }
+                    }}
+                    className="mt-4 w-full rounded-xl bg-[#f3f4f6] px-4 py-2.5 text-sm font-semibold text-[#374151] dark:bg-[#1f2937] dark:text-[#d1d5db]"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              )}
               <div className="card-list">
                 <TextSetting label="Default Calendar" value={settings.defaultCalendar} onChange={(value) => setSettings((current) => ({ ...current, defaultCalendar: value }))} />
                 <SelectSetting label="Default Event Alert" value={settings.defaultEventAlert} options={EVENT_ALERT_OPTIONS} onChange={(value) => setSettings((current) => ({ ...current, defaultEventAlert: value }))} />
@@ -385,6 +421,8 @@ export default function Home() {
             setEditingId(null);
           }}
         />
+      )}
+      </>
       )}
     </div>
   );
