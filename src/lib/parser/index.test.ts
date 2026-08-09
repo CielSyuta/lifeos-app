@@ -199,6 +199,89 @@ List: Life General`;
   });
 });
 
+describe("calendar routing rules", () => {
+  it("applies a matching routing rule when Calendar is blank", () => {
+    const settings = {
+      ...createDefaultSettings(),
+      calendarRoutingRules: [{ id: "1", matchText: "McDonald's", targetCalendar: "Work" }],
+    };
+
+    const sample = `[EVENT]
+Title: 🍟 McDonald's | Enfield
+Date: 2026-08-11
+Start: 4:00 PM
+End: 12:45 AM
+Calendar:
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, settings);
+    expect(item?.calendar).toBe("Work");
+  });
+
+  it("matches routing rules case-insensitively", () => {
+    const settings = {
+      ...createDefaultSettings(),
+      calendarRoutingRules: [{ id: "1", matchText: "gym", targetCalendar: "Personal" }],
+    };
+
+    const sample = `[EVENT]
+Title: 💪 GYM Session
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, settings);
+    expect(item?.calendar).toBe("Personal");
+  });
+
+  it("lets an explicit Calendar value override a saved routing rule", () => {
+    const settings = {
+      ...createDefaultSettings(),
+      calendarRoutingRules: [{ id: "1", matchText: "Gym", targetCalendar: "Personal" }],
+    };
+
+    const sample = `[EVENT]
+Title: 💪 Gym
+Date: 2026-08-11
+Start: 10:30 AM
+End: 12:30 PM
+Calendar: Family
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, settings);
+    expect(item?.calendar).toBe("Family");
+  });
+
+  it("falls back to the default calendar when no rule matches and Calendar is blank", () => {
+    const settings = { ...createDefaultSettings(), defaultCalendar: "Personal" };
+
+    const sample = `[EVENT]
+Title: 🎬 Movie Night
+Date: 2026-08-11
+Start: 7:00 PM
+End: 9:00 PM
+Calendar:
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, settings);
+    expect(item?.calendar).toBe("Personal");
+  });
+
+  it("does not alter existing parser behavior for events without routing rules", () => {
+    const sample = `[EVENT]
+Title: 🌅 Morning Routine
+Date: 2026-08-11
+Start: 7:30 AM
+End: 8:00 AM
+Calendar: Personal
+[/EVENT]`;
+
+    const [item] = parseSchedule(sample, createDefaultSettings());
+    expect(item?.calendar).toBe("Personal");
+  });
+});
+
 describe("handoff builders", () => {
   it("builds ICS with emoji title, overnight end date, location/address, URL and alarm", () => {
     const [event] = parseSchedule(`[EVENT]

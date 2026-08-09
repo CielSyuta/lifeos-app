@@ -1,4 +1,11 @@
-import { type LearnedRule, type Priority, type ScheduleItem, type TimeFormat, type UserSettings } from "../types";
+import {
+  type CalendarRoutingRule,
+  type LearnedRule,
+  type Priority,
+  type ScheduleItem,
+  type TimeFormat,
+  type UserSettings,
+} from "../types";
 
 const MONTHS: Record<string, number> = {
   january: 0,
@@ -35,6 +42,23 @@ const DEFAULTS: UserSettings = {
   saveImportHistory: true,
   defaultLocationBehavior: "ask",
   learnedRules: [],
+  calendarDefaults: {
+    personalCalendar: "Personal",
+    workCalendar: "Work",
+    otherCalendar: "Other",
+  },
+  calendarRoutingRules: [],
+  notificationSettings: {
+    dailyReminderEnabled: false,
+    dailyReminderTime: "08:00",
+    dailyReminderMessage: "Hey, did you plan your day already?",
+    eveningReminderEnabled: false,
+    eveningReminderTime: "21:00",
+    eveningReminderMessage: "Ready to plan tomorrow?",
+    timezone: "UTC",
+    deviceId: "",
+    pushSubscribed: false,
+  },
 };
 
 const CALENDAR_ALERTS = new Set(["none", "at_time", "5m", "10m", "15m", "30m", "1h", "2h", "1d"]);
@@ -44,7 +68,65 @@ export function createDefaultSettings(): UserSettings {
   return {
     ...DEFAULTS,
     learnedRules: [],
+    calendarDefaults: { ...DEFAULTS.calendarDefaults },
+    calendarRoutingRules: [],
+    notificationSettings: {
+      ...DEFAULTS.notificationSettings,
+      timezone: detectTimezone(),
+      deviceId: createDeviceId(),
+    },
   };
+}
+
+function detectTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function createDeviceId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
+/**
+ * Resolves the calendar name for a parsed calendar event using the documented priority:
+ * 1. an explicit `Calendar:` value from structured input
+ * 2. the first matching saved routing rule (case-insensitive substring match on title)
+ * 3. the configured default calendar
+ */
+export function resolveCalendarAssignment(
+  title: string,
+  explicitCalendar: string | undefined,
+  settings: UserSettings
+): string {
+  const explicit = explicitCalendar?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const rule = matchCalendarRoutingRule(title, settings.calendarRoutingRules);
+  if (rule) {
+    return rule.targetCalendar;
+  }
+
+  return settings.defaultCalendar;
+}
+
+export function matchCalendarRoutingRule(
+  title: string,
+  rules: CalendarRoutingRule[]
+): CalendarRoutingRule | undefined {
+  const normalizedTitle = title.toLowerCase();
+  return rules.find((rule) => {
+    const matchText = rule.matchText.trim().toLowerCase();
+    return matchText.length > 0 && normalizedTitle.includes(matchText);
+  });
 }
 
 export function parseSchedule(input: string, settings: UserSettings = createDefaultSettings()): ScheduleItem[] {
@@ -163,7 +245,7 @@ function parseStructuredItem(
       notes: values.notes || "",
       location: values.location || "",
       address: values.address || "",
-      calendar: values.calendar || settings.defaultCalendar,
+      calendar: resolveCalendarAssignment(title, values.calendar, settings),
       reminderList: settings.defaultReminderList,
       reminderColumn: settings.defaultReminderColumn,
       priority: "medium",
@@ -285,7 +367,7 @@ function parseNaturalSchedule(input: string, settings: UserSettings): ScheduleIt
       notes: notes.join("\n"),
       location: "",
       address: "",
-      calendar: settings.defaultCalendar,
+      calendar: itemType === "calendar" ? resolveCalendarAssignment(title, undefined, settings) : settings.defaultCalendar,
       reminderList: settings.defaultReminderList,
       reminderColumn: settings.defaultReminderColumn,
       priority: "medium",
