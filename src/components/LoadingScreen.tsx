@@ -30,6 +30,9 @@ export function LoadingScreen({ onDone }: LoadingScreenProps) {
 
       {/* Frosted glass card */}
       <div className="loading-card">
+        {/* Visually-hidden status text for screen readers */}
+        <span className="sr-only">Loading, please wait</span>
+
         {/* App icon */}
         <div className="loading-icon-wrap">
           <svg
