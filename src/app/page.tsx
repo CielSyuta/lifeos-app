@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { buildIcsContent } from "@/lib/calendar/ics";
 import {
   detectDuplicateItems,
   formatDisplayDate,
@@ -9,11 +8,23 @@ import {
   learnItemRule,
   parseSchedule,
 } from "@/lib/parser";
-import { buildShortcutPayload, buildShortcutUrl } from "@/lib/reminders/shortcut";
-import { clearAllData, loadActiveImport, loadHistory, loadSettings, saveActiveImport, saveHistory, saveSettings } from "@/lib/storage";
+import { addEventNative } from "@/lib/native/calendar";
+import { hapticLight, hapticSuccess } from "@/lib/native/haptics";
+import { addReminderNative } from "@/lib/native/reminders";
+import {
+  clearAllData,
+  loadActiveImport,
+  loadHistory,
+  loadOnboardingCompleted,
+  loadSettings,
+  saveActiveImport,
+  saveHistory,
+  saveOnboardingCompleted,
+  saveSettings,
+} from "@/lib/storage";
 import type { ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
 import { LoadingScreen } from "@/components/LoadingScreen";
-import { type MockAccount, MockAuthScreen, clearMockAccount, loadMockAccount } from "@/components/MockAuthScreen";
+import { OnboardingScreen } from "@/components/OnboardingScreen";
 
 const SAMPLE_SCHEDULE = `[EVENT]
 Title: 🌅 Morning Routine
@@ -64,8 +75,10 @@ const EVENT_ALERT_OPTIONS = ["none", "at_time", "5m", "10m", "15m", "30m", "1h",
 const REMINDER_ALERT_OPTIONS = ["none", "at_due_time", "5m", "10m", "15m", "30m", "1h", "2h", "1d"];
 const TRAVEL_TIME_OPTIONS = ["none", "15", "30", "45", "60", "90"];
 
+const APP_VERSION = "1.0.0";
+
 export default function Home() {
-  const [account, setAccount] = useState<MockAccount | null>(() => loadMockAccount());
+  const [onboardingDone, setOnboardingDone] = useState<boolean>(() => loadOnboardingCompleted());
   const [settings, setSettings] = useState<UserSettings>(() => loadSettings());
   const [scheduleText, setScheduleText] = useState(() => loadActiveImport()?.sourceText ?? SAMPLE_SCHEDULE);
   const [parsedItems, setParsedItems] = useState<ScheduleItem[]>(() => loadActiveImport()?.items ?? []);
@@ -76,6 +89,7 @@ export default function Home() {
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [resetConfirm, setResetConfirm] = useState(false);
 
   useEffect(() => {
     saveSettings(settings);
@@ -148,48 +162,53 @@ export default function Home() {
     };
 
     setActiveImport(session);
+    void hapticLight();
     setStatusMessage(`Parsed ${nextItems.length} item${nextItems.length === 1 ? "" : "s"}. Review and tap Add.`);
   }
 
-  function addItem(item: ScheduleItem) {
+  async function addItem(item: ScheduleItem) {
     const isFirstAdd = addedIds.size === 0;
 
+    let result: { success: boolean; error?: string };
     if (item.type === "calendar") {
-      const icsContent = buildIcsContent([item]);
-      const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${safeFileName(item.title)}.ics`;
-      link.click();
-      URL.revokeObjectURL(url);
-      setStatusMessage("Event file generated. Open it to add to Apple Calendar.");
+      result = await addEventNative(item);
+      if (result.success) {
+        setStatusMessage("Event added to Apple Calendar.");
+      } else {
+        setStatusMessage(result.error ?? "Unable to add event. Check Calendar permissions in Settings.");
+      }
     } else {
-      const payload = buildShortcutPayload([item]);
-      window.location.assign(buildShortcutUrl(payload));
-      setStatusMessage("Reminder handoff opened. Complete the shortcut flow in iOS.");
+      result = await addReminderNative(item);
+      if (result.success) {
+        setStatusMessage("Task sent to Apple Reminders.");
+      } else {
+        setStatusMessage(result.error ?? "Unable to add reminder. Check Reminders permissions in Settings.");
+      }
     }
 
-    setAddedIds((current) => {
-      const next = new Set(current);
-      next.add(item.id);
-      return next;
-    });
+    if (result.success) {
+      void hapticSuccess();
+      setAddedIds((current) => {
+        const next = new Set(current);
+        next.add(item.id);
+        return next;
+      });
 
-    if (settings.saveImportHistory && isFirstAdd) {
-      const now = new Date().toISOString();
-      const session: ImportSession = {
-        id: activeImport?.id ?? crypto.randomUUID(),
-        createdAt: activeImport?.createdAt ?? now,
-        sourceText: scheduleText,
-        items: parsedItems,
-        exportDate: now,
-        eventCount: parsedItems.filter((entry) => entry.type === "calendar").length,
-        reminderCount: parsedItems.filter((entry) => entry.type === "reminder").length,
-        notes: "Started individual add flow",
-      };
-      setActiveImport(session);
-      setHistory((current) => [session, ...current].slice(0, 20));
+      if (settings.saveImportHistory && isFirstAdd) {
+        const now = new Date().toISOString();
+        const session: ImportSession = {
+          id: activeImport?.id ?? crypto.randomUUID(),
+          createdAt: activeImport?.createdAt ?? now,
+          sourceText: scheduleText,
+          items: parsedItems,
+          exportDate: now,
+          eventCount: parsedItems.filter((entry) => entry.type === "calendar").length,
+          reminderCount: parsedItems.filter((entry) => entry.type === "reminder").length,
+          notes: "Started individual add flow",
+        };
+        setActiveImport(session);
+        setHistory((current) => [session, ...current].slice(0, 20));
+      }
     }
   }
 
@@ -207,20 +226,30 @@ export default function Home() {
     setStatusMessage("History import reopened.");
   }
 
+  function handleResetData() {
+    clearAllData();
+    window.location.reload();
+  }
+
   return (
     <div className={settings.darkMode ? "dark" : ""}>
       {loading && <LoadingScreen onDone={() => setLoading(false)} />}
-      {!loading && !account && (
-        <MockAuthScreen onAuthenticated={(acc) => setAccount(acc)} />
+      {!loading && !onboardingDone && (
+        <OnboardingScreen
+          onDone={() => {
+            saveOnboardingCompleted();
+            setOnboardingDone(true);
+          }}
+        />
       )}
-      {!loading && account && (
+      {!loading && onboardingDone && (
         <>
           <main className="safe-main min-h-screen bg-[#f0f2f7] text-[#0a0e1a] dark:bg-[#07080d] dark:text-[#eef0f8]">
             <div className="mx-auto max-w-[430px]">
           <header className="mb-4">
             <p className="text-[12px] font-semibold uppercase tracking-widest text-[#007aff] dark:text-[#60a5fa]">Schedule Parser</p>
             <h1 className="mt-1 text-3xl font-bold">Paste → Parse → Add</h1>
-            <p className="mt-1 text-sm text-[#5c6478] dark:text-[#8892a4]">Import utility for Apple Calendar and Reminders handoff.</p>
+            <p className="mt-1 text-sm text-[#5c6478] dark:text-[#8892a4]">Import utility for Apple Calendar and Reminders.</p>
           </header>
 
           <nav className="mb-4 grid grid-cols-3 gap-2 rounded-2xl bg-white p-1 shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:ring-white/6">
@@ -245,6 +274,7 @@ export default function Home() {
                     onChange={(event) => setScheduleText(event.target.value)}
                     className="min-h-[180px] w-full resize-none rounded-xl bg-[#f0f2f7] p-3 text-sm leading-6 text-[#0a0e1a] outline-none dark:bg-[#161820] dark:text-[#eef0f8]"
                     placeholder="Paste schedule text or canonical [EVENT]/[TASK] blocks"
+                    aria-label="Schedule text input"
                   />
                 </div>
                 <div className="grid grid-cols-3 gap-2 p-3 pt-0">
@@ -254,7 +284,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <p className="mt-3 rounded-xl bg-[#e8f2ff] px-3 py-2 text-xs font-medium text-[#0057b7] dark:bg-[#0c1e38] dark:text-[#93c5fd]">{statusMessage}</p>
+              <p className="mt-3 rounded-xl bg-[#e8f2ff] px-3 py-2 text-xs font-medium text-[#0057b7] dark:bg-[#0c1e38] dark:text-[#93c5fd]" role="status" aria-live="polite">{statusMessage}</p>
 
               {parsedItems.length > 0 && (
                 <div className="mt-4 space-y-4">
@@ -276,7 +306,7 @@ export default function Home() {
                       <div className="card-list">
                         {items.map((item) => (
                           <article key={item.id} className="card-row items-start justify-between">
-                            <button type="button" onClick={() => setEditingId(item.id)} className="min-w-0 flex-1 text-left">
+                            <button type="button" onClick={() => setEditingId(item.id)} className="min-w-0 flex-1 text-left" aria-label={`Edit ${item.title}`}>
                               <p className="truncate text-[15px] font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">{item.title}</p>
                               <p className="mt-1 text-xs text-[#5c6478] dark:text-[#8892a4]">{itemSummary(item, settings)}</p>
                               {item.location ? <p className="mt-1 text-xs text-[#5c6478] dark:text-[#8892a4]">{item.location}</p> : null}
@@ -299,8 +329,9 @@ export default function Home() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => addItem(item)}
+                              onClick={() => { void addItem(item); }}
                               className={`ml-3 shrink-0 rounded-lg px-3 py-2 text-xs font-semibold ${addedIds.has(item.id) ? "bg-[#e7f8ec] text-[#15803d] dark:bg-[#0f2c18] dark:text-[#86efac]" : "bg-[#007aff] text-white dark:bg-[#3b82f6]"}`}
+                              aria-label={addedIds.has(item.id) ? `${item.title} added` : `Add ${item.title}`}
                             >
                               {addedIds.has(item.id) ? "✓ Added" : "Add"}
                             </button>
@@ -311,7 +342,7 @@ export default function Home() {
                   ))}
 
                   <p className="rounded-xl bg-[#fff7e6] px-3 py-2 text-xs text-[#92400e] dark:bg-[#2b1f08] dark:text-[#fcd34d]">
-                    Travel Time is preserved in Parser data and shown here. Some iOS/PWA calendar handoff paths may not apply native Apple travel-time settings directly.
+                    Travel Time is preserved in parser data. On iOS, Calendar and Reminders access is requested only when you tap Add.
                   </p>
                 </div>
               )}
@@ -319,18 +350,18 @@ export default function Home() {
           )}
 
           {activeTab === "history" && (
-            <section>
+            <section aria-label="Import history">
               {history.length === 0 ? (
                 <p className="rounded-xl bg-white p-4 text-sm text-[#5c6478] shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:text-[#8892a4] dark:ring-white/6">No history yet.</p>
               ) : (
                 <div className="card-list">
                   {history.map((session) => (
                     <div key={session.id} className="card-row justify-between">
-                      <button type="button" onClick={() => reopenSession(session)} className="text-left">
+                      <button type="button" onClick={() => reopenSession(session)} className="text-left" aria-label={`Reopen session from ${new Date(session.createdAt).toLocaleString()}`}>
                         <p className="text-sm font-semibold text-[#0a0e1a] dark:text-[#eef0f8]">{new Date(session.createdAt).toLocaleString()}</p>
                         <p className="text-xs text-[#5c6478] dark:text-[#8892a4]">{session.eventCount} events · {session.reminderCount} tasks</p>
                       </button>
-                      <button type="button" onClick={() => setHistory((current) => current.filter((entry) => entry.id !== session.id))} className="text-xs font-semibold text-[#ef4444]">
+                      <button type="button" onClick={() => setHistory((current) => current.filter((entry) => entry.id !== session.id))} className="text-xs font-semibold text-[#ef4444]" aria-label="Delete this history entry">
                         Delete
                       </button>
                     </div>
@@ -341,36 +372,7 @@ export default function Home() {
           )}
 
           {activeTab === "settings" && (
-            <section className="space-y-4">
-              {/* Account info card (Jotform-style: label above read-only field) */}
-              {account && (
-                <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:ring-white/6">
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">Account</p>
-                  <div className="space-y-2">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#9ca3af]">Name</p>
-                      <p className="mt-0.5 text-sm font-medium text-[#0a0e1a] dark:text-[#eef0f8]">{account.firstName} {account.lastName}</p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#9ca3af]">Account Email</p>
-                      <p className="mt-0.5 break-all text-sm font-medium text-[#0a0e1a] dark:text-[#eef0f8]">{account.email}</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm("Sign out? You will need to create a new account.")) {
-                        clearMockAccount();
-                        clearAllData();
-                        window.location.reload();
-                      }
-                    }}
-                    className="mt-4 w-full rounded-xl bg-[#f3f4f6] px-4 py-2.5 text-sm font-semibold text-[#374151] dark:bg-[#1f2937] dark:text-[#d1d5db]"
-                  >
-                    Sign Out
-                  </button>
-                </div>
-              )}
+            <section className="space-y-4" aria-label="Settings">
               <div className="card-list">
                 <TextSetting label="Default Calendar" value={settings.defaultCalendar} onChange={(value) => setSettings((current) => ({ ...current, defaultCalendar: value }))} />
                 <SelectSetting label="Default Event Alert" value={settings.defaultEventAlert} options={EVENT_ALERT_OPTIONS} onChange={(value) => setSettings((current) => ({ ...current, defaultEventAlert: value }))} />
@@ -393,18 +395,54 @@ export default function Home() {
                 <SwitchSetting label="Save Import History" checked={settings.saveImportHistory} onChange={(value) => setSettings((current) => ({ ...current, saveImportHistory: value }))} />
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm("Delete all saved data?")) {
-                    clearAllData();
-                    window.location.reload();
-                  }
-                }}
-                className="w-full rounded-xl bg-[#fee2e2] px-4 py-3 text-sm font-semibold text-[#ef4444] dark:bg-[#2d0f0f] dark:text-[#f87171]"
-              >
-                Delete All Data
-              </button>
+              {/* Privacy & About */}
+              <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:ring-white/6">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">Privacy</p>
+                <div className="space-y-2 text-sm text-[#5c6478] dark:text-[#8892a4]">
+                  <p>LifeOS stores your schedule text, parsed items, and preferences only on this device.</p>
+                  <p>Calendar and Reminders access is requested only when you choose to add an item. No data is sent to any server.</p>
+                  {/* MANUAL APP STORE STEP: replace with the real hosted Privacy Policy URL before submission */}
+                  <p className="text-xs text-[#9ca3af]">Privacy Policy: see app listing on App Store</p>
+                </div>
+              </div>
+
+              {/* About */}
+              <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5 dark:bg-[#0f1117] dark:ring-white/6">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-[#9ca3af]">About LifeOS</p>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-[#5c6478] dark:text-[#8892a4]">Version</span>
+                    <span className="font-medium text-[#0a0e1a] dark:text-[#eef0f8]">{APP_VERSION}</span>
+                  </div>
+                  {/* MANUAL APP STORE STEP: replace with the real support URL before submission */}
+                  <div className="flex justify-between">
+                    <span className="text-[#5c6478] dark:text-[#8892a4]">Support</span>
+                    <span className="text-[#9ca3af] text-xs">See App Store listing</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Reset */}
+              {resetConfirm ? (
+                <div className="rounded-2xl bg-[#fee2e2] p-4 dark:bg-[#2d0f0f]">
+                  <p className="mb-2 text-sm font-semibold text-[#ef4444]">Delete all LifeOS data?</p>
+                  <p className="mb-3 text-xs text-[#92400e] dark:text-[#fcd34d]">
+                    This removes settings, history, and parsed schedules stored on this device. It does <strong>not</strong> delete any events or reminders already added to Apple Calendar or Apple Reminders.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setResetConfirm(false)} className="rounded-xl bg-white px-3 py-2 text-sm font-semibold text-[#374151] dark:bg-[#1f2937] dark:text-[#d1d5db]">Cancel</button>
+                    <button type="button" onClick={handleResetData} className="rounded-xl bg-[#ef4444] px-3 py-2 text-sm font-semibold text-white">Delete</button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setResetConfirm(true)}
+                  className="w-full rounded-xl bg-[#fee2e2] px-4 py-3 text-sm font-semibold text-[#ef4444] dark:bg-[#2d0f0f] dark:text-[#f87171]"
+                >
+                  Reset LifeOS Data
+                </button>
+              )}
             </section>
           )}
           </div>
@@ -442,7 +480,7 @@ function EditSheet({
   const [form, setForm] = useState<ScheduleItem>(item);
 
   return (
-    <div className="fixed inset-0 z-40 bg-black/40 p-4">
+    <div className="fixed inset-0 z-40 bg-black/40 p-4" role="dialog" aria-modal="true" aria-label={`Edit ${item.type === "calendar" ? "event" : "reminder"}`}>
       <div className="mx-auto max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-2xl bg-white p-4 dark:bg-[#0f1117]">
         <h2 className="mb-3 text-lg font-semibold">{item.type === "calendar" ? "Event" : "Reminder"} Details</h2>
 
@@ -530,10 +568,6 @@ function formatAlertLabel(alert: string): string {
     default:
       return alert;
   }
-}
-
-function safeFileName(title: string): string {
-  return title.replace(/[^\p{L}\p{N}\s_-]/gu, "").trim() || "event";
 }
 
 function extractEmoji(title: string): string {

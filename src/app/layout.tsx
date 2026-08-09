@@ -4,12 +4,12 @@ import { PwaRegister } from "@/components/PwaRegister";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Schedule Parser",
+  title: "LifeOS",
   description: "Paste a schedule, parse it, then add events to Apple Calendar or tasks to Reminders.",
-  manifest: "/manifest.webmanifest",
+  manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    title: "Schedule Parser",
+    title: "LifeOS",
     statusBarStyle: "black-translucent",
   },
   icons: {
