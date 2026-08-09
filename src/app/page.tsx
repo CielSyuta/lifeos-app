@@ -12,6 +12,7 @@ import {
 import { buildShortcutPayload, buildShortcutUrl } from "@/lib/reminders/shortcut";
 import { clearAllData, loadActiveImport, loadHistory, loadSettings, saveActiveImport, saveHistory, saveSettings } from "@/lib/storage";
 import type { ImportSession, ScheduleItem, UserSettings } from "@/lib/types";
+import { LoadingScreen } from "@/components/LoadingScreen";
 
 const SAMPLE_SCHEDULE = `[EVENT]
 Title: 🌅 Morning Routine
@@ -72,6 +73,7 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState("Paste a schedule, parse it, then add items one-by-one.");
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     saveSettings(settings);
@@ -205,6 +207,7 @@ export default function Home() {
 
   return (
     <div className={settings.darkMode ? "dark" : ""}>
+      {loading && <LoadingScreen onDone={() => setLoading(false)} />}
       <main className="min-h-screen bg-[#f0f2f7] px-4 pb-28 pt-5 text-[#0a0e1a] dark:bg-[#07080d] dark:text-[#eef0f8]">
         <div className="mx-auto max-w-[430px]">
           <header className="mb-4">
